@@ -69,9 +69,9 @@ export def --env new [
 #
 # Session names are clipped to 24 chars to satisfy Zellij's limit.
 export def zellij [
-  --workspace (-w): string  # Workspace name (defaults to the current one)
+  --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
-  let name = (_workspace_name $workspace)
+  let name = (_select_workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   let session = ($name | str substring 0..23)
   do { cd $dir; ^zellij attach --create $session }
@@ -93,10 +93,10 @@ export def --env switch [
 # Bare names are resolved against $env.WORKSPACES_GH_ORG; pass owner/name to
 # override the org for a single repo.
 export def clone [
-  ...repos: string          # Repos to clone (name or owner/name)
-  --workspace (-w): string  # Target workspace (defaults to the current one)
+  ...repos: string  # Repos to clone (name or owner/name)
+  --choose (-c)     # Pick a target workspace interactively instead of using the current one
 ]: nothing -> nothing {
-  let name = (_workspace_name $workspace)
+  let name = (_select_workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   if not ($dir | path exists) {
     error make {
@@ -130,11 +130,11 @@ export def clone [
 #   workspace diff --cached
 #   workspace diff HEAD~1 -- src/
 export def diff [
-  ...args: string           # Extra arguments forwarded to `git diff`
-  --workspace (-w): string  # Workspace name (defaults to the current one)
-  --parallel (-p)           # Run repos concurrently
+  ...args: string   # Extra arguments forwarded to `git diff`
+  --choose (-c)     # Pick a workspace interactively instead of using the current one
+  --parallel (-p)   # Run repos concurrently
 ]: nothing -> table {
-  in-each --workspace=$workspace --parallel=$parallel {|| ^git diff --color=always ...$args }
+  in-each --choose=$choose --parallel=$parallel {|| ^git diff --color=always ...$args }
 }
 
 # Run a closure inside each repo of a workspace
@@ -145,11 +145,11 @@ export def diff [
 #   workspace in-each {|| git fetch origin main:main; git rebase main --autostash}
 #   workspace in-each --parallel {|| ^git status --short}
 export def "in-each" [
-  action: closure           # Closure run inside each repo (cwd = repo)
-  --workspace (-w): string  # Workspace name (defaults to the current one)
-  --parallel (-p)           # Run repos concurrently
+  action: closure   # Closure run inside each repo (cwd = repo)
+  --choose (-c)     # Pick a workspace interactively instead of using the current one
+  --parallel (-p)   # Run repos concurrently
 ]: nothing -> table {
-  let name = (_workspace_name $workspace)
+  let name = (_select_workspace $choose)
   let repos = (_workspace_repos $name)
   if ($repos | is-empty) {
     error make { msg: $"No git repos found in workspace '($name)'." }
@@ -176,24 +176,34 @@ def _try_infer_workspace []: nothing -> string {
   $pwd | path relative-to $root | path split | first
 }
 
-# Resolve an explicit workspace name or fall back to the inferred one, erroring
-# if neither is available.
-def _workspace_name [name?: string]: nothing -> string {
-  let resolved = $name | default (_try_infer_workspace)
-  if $resolved == null {
-    error make {
-      msg: "Not inside a workspace. Pass --workspace <name> or cd into one."
+# Resolve which workspace a user-facing command should target — either via an
+# interactive picker (--choose) or by inferring from $env.PWD.
+def _select_workspace [choose: bool]: nothing -> string {
+  if $choose {
+    let names = (ls $env.WORKSPACES_ROOT
+      | where type == dir
+      | get name
+      | each { $in | path basename }
+      | where {|n| not ($n | str starts-with "_") }
+      | sort)
+    if ($names | is-empty) {
+      error make { msg: "No workspaces found." }
     }
+    $names | input list "Workspace:"
+  } else {
+    let inferred = (_try_infer_workspace)
+    if $inferred == null {
+      error make { msg: "Not inside a workspace. Pass --choose or cd into one." }
+    }
+    $inferred
   }
-  $resolved
 }
 
 # List the git repos (immediate subdirectories containing .git) in a workspace.
-def _workspace_repos [name?: string]: nothing -> list<path> {
-  let resolved = (_workspace_name $name)
-  let dir = ($env.WORKSPACES_ROOT | path join $resolved)
+def _workspace_repos [name: string]: nothing -> list<path> {
+  let dir = ($env.WORKSPACES_ROOT | path join $name)
   if not ($dir | path exists) {
-    error make { msg: $"Workspace '($resolved)' does not exist." }
+    error make { msg: $"Workspace '($name)' does not exist." }
   }
   ls $dir
   | where type == dir
