@@ -65,6 +65,18 @@ export def --env new [
   }
 }
 
+# Attach to (or create) a Zellij session named after the workspace
+#
+# Session names are clipped to 24 chars to satisfy Zellij's limit.
+export def zellij [
+  --workspace (-w): string  # Workspace name (defaults to the current one)
+]: nothing -> nothing {
+  let name = (_workspace_name $workspace)
+  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let session = ($name | str substring 0..23)
+  do { cd $dir; ^zellij attach --create $session }
+}
+
 # cd into an existing workspace
 export def --env switch [
   name: string  # Workspace directory name
