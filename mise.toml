@@ -1,0 +1,12 @@
+[tasks]
+shell = {
+    description = "Open Nushell with the workspace overlay loaded",
+    run = '''
+        cd $MISE_ORIGINAL_CWD
+        nu --execute "source {{config_root}}/nushell/activate.nu; help workspace"
+    '''
+}
+
+[hooks]
+postinstall = "command -v nu >/dev/null 2>&1 || brew install nushell"
+enter = "mise run shell"
