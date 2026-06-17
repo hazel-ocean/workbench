@@ -41,12 +41,12 @@ Run a closure in every repo of the current workspace (cwd = repo, returns a
 ```nu
 workspace in-each {|| git fetch origin main:main; git rebase main --autostash}
 workspace in-each --parallel {|| ^git status --short}
-workspace in-each --workspace ENG-123 {|| ^git rev-parse --abbrev-ref HEAD}
+workspace in-each --choose {|| ^git rev-parse --abbrev-ref HEAD}
 workspace diff --cached          # shorthand for `in-each {|| git diff ...}`
 ```
 
-Most commands default to the current workspace (inferred from `$env.PWD`) and
-accept `--workspace <name>` to target another.
+Most commands default to the current workspace (inferred from `$env.PWD`).
+Pass `--choose` (`-c`) to pick a different one from a list instead.
 
 ## Configuration
 
