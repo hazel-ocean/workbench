@@ -233,16 +233,18 @@ export def clone [
 
 # Run `git diff --color=always ...args` inside each repo of a workspace
 #
-# Extra arguments are forwarded to `git diff`, so flags, revisions, and paths
-# pass straight through:
+# The def is `--wrapped`, so any unrecognized flags, revisions, and paths pass
+# straight through to `git diff` (only --choose/--parallel are consumed here):
 #   workspace diff
 #   workspace diff --cached
 #   workspace diff HEAD~1 -- src/
-export def diff [
+export def --wrapped diff [
   ...args: string   # Extra arguments forwarded to `git diff`
   --choose (-c)     # Pick a workspace interactively instead of using the current one
   --parallel (-p)   # Run repos concurrently
 ]: nothing -> table {
+  # `--wrapped` forwards --help into $args, so handle it ourselves.
+  if ("--help" in $args) or ("-h" in $args) { print (help workspace diff); return }
   in-each --choose=$choose --parallel=$parallel {|| ^git diff --color=always ...$args }
 }
 
