@@ -88,6 +88,115 @@ export def --env switch [
   cd $dir
 }
 
+# Permanently delete one or more workspaces and everything inside them
+#
+# Pass explicit workspace names, or omit them to pick interactively
+# (multi-select). The confirmation flags workspaces with uncommitted work;
+# pass --force to skip it. This is irreversible — use `workspace trash` instead
+# to keep the directories recoverable.
+#
+#   workspace delete ENG-123
+#   workspace delete ENG-123 ENG-456
+#   workspace delete                  # multi-select picker
+#   workspace delete --force ENG-123  # no confirmation
+export def --env delete [
+  ...names: string   # Workspace(s) to delete; omit to choose interactively
+  --force (-f)       # Skip the confirmation prompt
+]: nothing -> nothing {
+  _remove_workspaces $names $force false
+}
+
+# Move one or more workspaces to the system trash (recoverable)
+#
+# Like `workspace delete`, but routes through the OS trash so the directories
+# can be restored later. Pass explicit workspace names, or omit them to pick
+# interactively (multi-select); the confirmation flags workspaces with
+# uncommitted work, and --force skips it.
+#
+#   workspace trash ENG-123
+#   workspace trash ENG-123 ENG-456
+#   workspace trash                   # multi-select picker
+#   workspace trash --force ENG-123   # no confirmation
+export def --env trash [
+  ...names: string   # Workspace(s) to trash; omit to choose interactively
+  --force (-f)       # Skip the confirmation prompt
+]: nothing -> nothing {
+  _remove_workspaces $names $force true
+}
+
+# Shared implementation for `delete` / `trash`.
+#
+# Resolves targets (explicit names or a multi-select picker), confirms unless
+# forced (flagging dirty repos), steps out of any target the shell is sitting
+# in, then removes each directory — via the system trash when `trash` is set.
+def --env _remove_workspaces [
+  names: list<string>   # Explicit workspace names, or empty to pick interactively
+  force: bool           # Skip the confirmation prompt
+  trash: bool           # Move to the system trash instead of deleting permanently
+]: nothing -> nothing {
+  let verb = if $trash { "trash" } else { "delete" }
+  let targets = if ($names | is-empty) {
+    let all = (_workspace_names)
+    if ($all | is-empty) {
+      error make { msg: "No workspaces found." }
+    }
+    $all | input list --multi $"Workspaces to ($verb):"
+  } else {
+    $names
+  }
+
+  if ($targets | is-empty) {
+    print "Nothing selected."
+    return
+  }
+
+  for name in $targets {
+    let dir = ($env.WORKSPACES_ROOT | path join $name)
+    if not ($dir | path exists) {
+      error make { msg: $"Workspace '($name)' does not exist." }
+    }
+  }
+
+  if not $force {
+    print $"About to ($verb):"
+    for name in $targets {
+      let dirty = (_workspace_repos $name
+        | each {|r| _repo_summary $r }
+        | where status == "dirty"
+        | length)
+      let note = if $dirty > 0 {
+        $" (ansi red)[($dirty) dirty repo\(s\)](ansi reset)"
+      } else {
+        ""
+      }
+      print $"  ($name)($note)"
+    }
+    let answer = (["no" "yes"] | input list "Confirm?")
+    if $answer != "yes" {
+      print "Aborted."
+      return
+    }
+  }
+
+  # If the shell is sitting inside one of the targets, step back to the root so
+  # we don't strand the session in a deleted directory.
+  let current = (_try_infer_workspace)
+  if $current != null and ($current in $targets) {
+    cd $env.WORKSPACES_ROOT
+  }
+
+  for name in $targets {
+    let dir = ($env.WORKSPACES_ROOT | path join $name)
+    if $trash {
+      rm --recursive --trash $dir
+      print $"(ansi yellow)trashed ($name)(ansi reset)"
+    } else {
+      rm --recursive --force $dir
+      print $"(ansi red)deleted ($name)(ansi reset)"
+    }
+  }
+}
+
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
 # Bare names are resolved against $env.WORKSPACES_GH_ORG; pass owner/name to
@@ -176,16 +285,21 @@ def _try_infer_workspace []: nothing -> string {
   $pwd | path relative-to $root | path split | first
 }
 
+# All workspace names (immediate subdirs, excluding "_"-prefixed), sorted.
+def _workspace_names []: nothing -> list<string> {
+  ls $env.WORKSPACES_ROOT
+  | where type == dir
+  | get name
+  | each { $in | path basename }
+  | where {|n| not ($n | str starts-with "_") }
+  | sort
+}
+
 # Resolve which workspace a user-facing command should target — either via an
 # interactive picker (--choose) or by inferring from $env.PWD.
 def _select_workspace [choose: bool]: nothing -> string {
   if $choose {
-    let names = (ls $env.WORKSPACES_ROOT
-      | where type == dir
-      | get name
-      | each { $in | path basename }
-      | where {|n| not ($n | str starts-with "_") }
-      | sort)
+    let names = (_workspace_names)
     if ($names | is-empty) {
       error make { msg: "No workspaces found." }
     }
