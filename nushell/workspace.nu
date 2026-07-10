@@ -13,6 +13,12 @@
 # Reload after editing these files:
 #   workspace use
 
+# Utility commands live in util.nu. Plain `use` (not `export use`) keeps them
+# out of the public `workspace` overlay. `path self` mirrors mod.nu so the path
+# resolves regardless of the caller's cwd.
+const UTIL = path self | path dirname | path join "util.nu"
+use $UTIL *
+
 # Print the absolute path of the workspaces root
 export def root []: nothing -> path {
   $env.WORKSPACES_ROOT
@@ -28,23 +34,9 @@ export def list []: nothing -> table {
   | each {|p|
     {
       workspace: ($p | path basename)
-      repos: (_workspace_repos ($p | path basename) | each {|r| _repo_summary $r })
+      repos: (workspace-repos ($p | path basename) | each {|r| repo-summary $r })
     }
   }
-}
-
-# Branch + porcelain status for a single repo path.
-def _repo_summary [repo: path]: nothing -> record {
-  let current = (^git -C $repo branch --show-current | str trim)
-  let branch = if ($current | is-empty) {
-    let sha = (^git -C $repo rev-parse --short HEAD | str trim)
-    $"detached@($sha)"
-  } else {
-    $current
-  }
-  let porcelain = (^git -C $repo status --porcelain)
-  let status = if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" }
-  { name: ($repo | path basename), status: $status, branch: $branch }
 }
 
 # Create a new workspace and cd into it, optionally cloning repos
@@ -71,78 +63,86 @@ export def --env new [
 export def zellij [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
-  let name = (_select_workspace $choose)
+  let name = (select-workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   let session = ($name | str substring 0..23)
   do { cd $dir; ^zellij attach --create $session }
 }
 
-# cd into an existing workspace
+# cd into an existing workspace, matched by name or partial
+#
+# The argument is matched case-insensitively: an exact name wins outright,
+# otherwise every workspace whose name contains the substring is a candidate.
+# More than one candidate — or omitting the name entirely — opens a picker;
+# a query that matches nothing falls back to a picker over all workspaces.
+#
+#   workspace switch ENG-123   # exact
+#   workspace switch sms       # substring; picks if more than one matches
+#   workspace switch           # pick interactively
 export def --env switch [
-  name: string  # Workspace directory name
+  name?: string   # Workspace name or partial; omit to choose interactively
 ]: nothing -> nothing {
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
-  if not ($dir | path exists) {
-    error make { msg: $"Workspace '($name)' does not exist." }
+  let sel = (select-workspaces $name --prompt "Switch to:")
+  if ($sel | is-empty) {
+    print "Nothing selected."
+    return
   }
-  cd $dir
+  cd ($env.WORKSPACES_ROOT | path join ($sel | first))
 }
 
-# Permanently delete one or more workspaces and everything inside them
+# Permanently delete workspaces and everything inside them
 #
-# Pass explicit workspace names, or omit them to pick interactively
-# (multi-select). The confirmation flags workspaces with uncommitted work;
-# pass --force to skip it. This is irreversible — use `workspace trash` instead
-# to keep the directories recoverable.
+# Pass a name or partial, or omit it to pick from all. An exact name or unique
+# substring resolves directly; anything ambiguous (or a no-match fall back to
+# all) opens a fuzzy multi-select. Unless --force is given, the selection's
+# contents are listed (including hidden files, flagging uncommitted work) and
+# confirmed first. This is irreversible — use `workspace trash` to keep the
+# directories recoverable.
 #
-#   workspace delete ENG-123
-#   workspace delete ENG-123 ENG-456
-#   workspace delete                  # multi-select picker
+#   workspace delete ENG-123          # exact
+#   workspace delete sms              # substring; multi-select if ambiguous
+#   workspace delete                  # pick from all
 #   workspace delete --force ENG-123  # no confirmation
 export def --env delete [
-  ...names: string   # Workspace(s) to delete; omit to choose interactively
-  --force (-f)       # Skip the confirmation prompt
+  query?: string   # Workspace name or partial; omit to choose interactively
+  --force (-f)     # Skip the confirmation prompt
 ]: nothing -> nothing {
-  _remove_workspaces $names $force false
+  remove-workspaces $force false $query
 }
 
-# Move one or more workspaces to the system trash (recoverable)
+# Move workspaces to the system trash (recoverable)
 #
 # Like `workspace delete`, but routes through the OS trash so the directories
-# can be restored later. Pass explicit workspace names, or omit them to pick
-# interactively (multi-select); the confirmation flags workspaces with
-# uncommitted work, and --force skips it.
+# can be restored later. Selection, contents preview, and --force behave the
+# same as `delete`.
 #
-#   workspace trash ENG-123
-#   workspace trash ENG-123 ENG-456
-#   workspace trash                   # multi-select picker
+#   workspace trash ENG-123           # exact
+#   workspace trash sms               # substring; multi-select if ambiguous
+#   workspace trash                   # pick from all
 #   workspace trash --force ENG-123   # no confirmation
 export def --env trash [
-  ...names: string   # Workspace(s) to trash; omit to choose interactively
-  --force (-f)       # Skip the confirmation prompt
+  query?: string   # Workspace name or partial; omit to choose interactively
+  --force (-f)     # Skip the confirmation prompt
 ]: nothing -> nothing {
-  _remove_workspaces $names $force true
+  remove-workspaces $force true $query
 }
 
 # Shared implementation for `delete` / `trash`.
 #
-# Resolves targets (explicit names or a multi-select picker), confirms unless
-# forced (flagging dirty repos), steps out of any target the shell is sitting
-# in, then removes each directory — via the system trash when `trash` is set.
-def --env _remove_workspaces [
-  names: list<string>   # Explicit workspace names, or empty to pick interactively
+# Resolves targets via `select-workspaces` (which handles the picker, the
+# contents preview, and the confirmation when not forced), steps out of any
+# target the shell is sitting in, then removes each directory — via the system
+# trash when `trash` is set.
+def --env remove-workspaces [
   force: bool           # Skip the confirmation prompt
   trash: bool           # Move to the system trash instead of deleting permanently
+  query?: string        # Workspace name or partial; omit to pick interactively
 ]: nothing -> nothing {
   let verb = if $trash { "trash" } else { "delete" }
-  let targets = if ($names | is-empty) {
-    let all = (_workspace_names)
-    if ($all | is-empty) {
-      error make { msg: "No workspaces found." }
-    }
-    $all | input list --multi $"Workspaces to ($verb):"
+  let targets = if $force {
+    select-workspaces $query --multi --prompt $"Workspaces to ($verb):"
   } else {
-    $names
+    select-workspaces $query --multi --confirm --list-contents --prompt $"Workspaces to ($verb):"
   }
 
   if ($targets | is-empty) {
@@ -150,37 +150,9 @@ def --env _remove_workspaces [
     return
   }
 
-  for name in $targets {
-    let dir = ($env.WORKSPACES_ROOT | path join $name)
-    if not ($dir | path exists) {
-      error make { msg: $"Workspace '($name)' does not exist." }
-    }
-  }
-
-  if not $force {
-    print $"About to ($verb):"
-    for name in $targets {
-      let dirty = (_workspace_repos $name
-        | each {|r| _repo_summary $r }
-        | where status == "dirty"
-        | length)
-      let note = if $dirty > 0 {
-        $" (ansi red)[($dirty) dirty repo\(s\)](ansi reset)"
-      } else {
-        ""
-      }
-      print $"  ($name)($note)"
-    }
-    let answer = (["no" "yes"] | input list "Confirm?")
-    if $answer != "yes" {
-      print "Aborted."
-      return
-    }
-  }
-
   # If the shell is sitting inside one of the targets, step back to the root so
   # we don't strand the session in a deleted directory.
-  let current = (_try_infer_workspace)
+  let current = (try-infer-workspace)
   if $current != null and ($current in $targets) {
     cd $env.WORKSPACES_ROOT
   }
@@ -205,7 +177,7 @@ export def clone [
   ...repos: string  # Repos to clone (name or owner/name)
   --choose (-c)     # Pick a target workspace interactively instead of using the current one
 ]: nothing -> nothing {
-  let name = (_select_workspace $choose)
+  let name = (select-workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   if not ($dir | path exists) {
     error make {
@@ -260,8 +232,8 @@ export def "in-each" [
   --choose (-c)     # Pick a workspace interactively instead of using the current one
   --parallel (-p)   # Run repos concurrently
 ]: nothing -> table {
-  let name = (_select_workspace $choose)
-  let repos = (_workspace_repos $name)
+  let name = (select-workspace $choose)
+  let repos = (workspace-repos $name)
   if ($repos | is-empty) {
     error make { msg: $"No git repos found in workspace '($name)'." }
   }
@@ -275,55 +247,4 @@ export def "in-each" [
   } else {
     $repos | each $runner
   }
-}
-
-# Infer the current workspace name from $env.PWD, or null if not inside one.
-def _try_infer_workspace []: nothing -> string {
-  let root = ($env.WORKSPACES_ROOT | path expand)
-  let pwd = ($env.PWD | path expand)
-  if $pwd == $root or not ($pwd | str starts-with ($root | path join "")) {
-    return null
-  }
-  $pwd | path relative-to $root | path split | first
-}
-
-# All workspace names (immediate subdirs, excluding "_"-prefixed), sorted.
-def _workspace_names []: nothing -> list<string> {
-  ls $env.WORKSPACES_ROOT
-  | where type == dir
-  | get name
-  | each { $in | path basename }
-  | where {|n| not ($n | str starts-with "_") }
-  | sort
-}
-
-# Resolve which workspace a user-facing command should target — either via an
-# interactive picker (--choose) or by inferring from $env.PWD.
-def _select_workspace [choose: bool]: nothing -> string {
-  if $choose {
-    let names = (_workspace_names)
-    if ($names | is-empty) {
-      error make { msg: "No workspaces found." }
-    }
-    $names | input list "Workspace:"
-  } else {
-    let inferred = (_try_infer_workspace)
-    if $inferred == null {
-      error make { msg: "Not inside a workspace. Pass --choose or cd into one." }
-    }
-    $inferred
-  }
-}
-
-# List the git repos (immediate subdirectories containing .git) in a workspace.
-def _workspace_repos [name: string]: nothing -> list<path> {
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
-  if not ($dir | path exists) {
-    error make { msg: $"Workspace '($name)' does not exist." }
-  }
-  ls $dir
-  | where type == dir
-  | get name
-  | where {|p| ($p | path join ".git" | path exists) }
-  | sort
 }

@@ -29,9 +29,9 @@ help workspace                   # list commands
 workspace new ENG-123 web-app api-service            # create + cd + clone
 workspace clone some-repo                            # clone into current workspace
 workspace clone other-org/their-repo                 # override the default org
-workspace switch ENG-123                             # cd into a workspace
-workspace delete ENG-123                             # permanently remove a workspace (multi-select picker if no name)
-workspace trash ENG-123                              # same, but route through the system trash (recoverable)
+workspace switch sms                                 # cd into a workspace (name/partial; picker if ambiguous or omitted)
+workspace delete sms                                 # permanently remove (fuzzy multi-select + contents preview + confirm)
+workspace trash sms                                  # same, but route through the system trash (recoverable)
 workspace zellij                                     # attach to / create a zellij session for the workspace
 workspace list                                       # all workspaces, with each repo's branch + status
 workspace root                                       # workspaces root path
