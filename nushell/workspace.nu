@@ -79,15 +79,23 @@ export def zellij [
 #   workspace switch ENG-123   # exact
 #   workspace switch sms       # substring; picks if more than one matches
 #   workspace switch           # pick interactively
+#   workspace switch -z ENG-123   # switch, then attach a Zellij session
 export def --env switch [
   name?: string   # Workspace name or partial; omit to choose interactively
+  --zellij (-z)   # After switching, attach to (or create) a Zellij session for the workspace
 ]: nothing -> nothing {
   let sel = (select-workspaces $name --prompt "Switch to:")
   if ($sel | is-empty) {
     print "Nothing selected."
     return
   }
-  cd ($env.WORKSPACES_ROOT | path join ($sel | first))
+  let name = ($sel | first)
+  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  cd $dir
+  if $zellij {
+    let session = ($name | str substring 0..23)
+    do { cd $dir; ^zellij attach --create $session }
+  }
 }
 
 # Permanently delete workspaces and everything inside them
