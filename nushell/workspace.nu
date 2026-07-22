@@ -59,14 +59,16 @@ export def --env new [
 
 # Attach to (or create) a Zellij session named after the workspace
 #
-# Session names are clipped to 24 chars to satisfy Zellij's limit.
+# The workspace name is used as-is; if Zellij rejects it (too long, bad
+# characters, …) you're re-prompted for a different name. Pass --rename to name
+# the session yourself up front.
 export def zellij [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
+  --rename (-r)             # Prompt for a custom session name instead of the workspace name
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
-  let session = ($name | str substring 0..23)
-  do { cd $dir; ^zellij attach --create $session }
+  zellij-attach $dir $name --rename=$rename
 }
 
 # cd into an existing workspace, matched by name or partial
@@ -83,6 +85,7 @@ export def zellij [
 export def --env switch [
   name?: string   # Workspace name or partial; omit to choose interactively
   --zellij (-z)   # After switching, attach to (or create) a Zellij session for the workspace
+  --rename (-r)   # With --zellij, prompt for a custom session name up front
 ]: nothing -> nothing {
   let sel = (select-workspaces $name --prompt "Switch to:")
   if ($sel | is-empty) {
@@ -93,8 +96,7 @@ export def --env switch [
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   cd $dir
   if $zellij {
-    let session = ($name | str substring 0..23)
-    do { cd $dir; ^zellij attach --create $session }
+    zellij-attach $dir $name --rename=$rename
   }
 }
 

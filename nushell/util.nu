@@ -15,6 +15,76 @@ export def workspace-names []: nothing -> list<string> {
   | sort
 }
 
+# Width of the on-screen ruler guide in the session-name prompt. Zellij enforces
+# its own session-name rules; this only sizes the visual guide, never validates.
+const ZELLIJ_RULER_WIDTH = 24
+
+# Prompt for a Zellij session name, showing `message`, the current name (red),
+# and a width ruler as a guide. Returns the entered name, trimmed ("" if empty).
+def prompt-session-name [current: string, message: string]: nothing -> string {
+  let bar = (0..<($ZELLIJ_RULER_WIDTH - 1) | each {|| "-" } | str join)
+  print ([
+    ""
+    $"(ansi light_blue)($message)(ansi reset)"
+    ""
+    $"(ansi red)($current)(ansi reset)"
+    $"(ansi light_blue)($bar)|(ansi reset) <- Limit"
+  ] | str join (char newline))
+  let entered = (input $"(ansi light_blue)" | str trim)
+  print (ansi reset)  # clear color, and separate this attempt from the next
+  $entered
+}
+
+# True if a Zellij session with this exact name currently exists.
+def zellij-session-exists [name: string]: nothing -> bool {
+  ^zellij list-sessions --no-formatting --short
+  | complete
+  | get stdout
+  | lines
+  | any {|s| ($s | str trim) == $name }
+}
+
+# Attach to (or create) a Zellij session in `dir`, re-prompting on a bad name.
+#
+# The name is created detached first (`--create-background | complete`) so an
+# invalid name comes back as captured stderr rather than a half-torn-down
+# terminal — keeping the re-prompt in a clean terminal. Steps:
+#   1. With --rename, prompt for a name up front (cancel on empty input).
+#   2. If we're already in that session, there's nothing to do.
+#   3. If the session already exists, attach to it.
+#   4. Otherwise create it detached; on success, attach.
+#   5. On failure, print the literal stderr + exit code (red), prompt for a
+#      different name, and go to 2. Empty input cancels.
+export def zellij-attach [
+  dir: path        # Workspace directory to launch from
+  session: string  # Initial session name (usually the workspace name)
+  --rename         # Prompt for a custom name before the first attempt
+]: nothing -> nothing {
+  cd $dir
+  mut session = $session
+  if $rename {
+    let named = (prompt-session-name $session "Name the Zellij session:")
+    if ($named | is-empty) { print "Cancelled."; return }
+    $session = $named
+  }
+  loop {
+    if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
+      print $"Already in Zellij session '($session)'."
+      return
+    }
+    if (zellij-session-exists $session) { break }
+    # `--` so a name beginning with `-` is taken as the session, not a flag.
+    let result = (^zellij attach --create-background -- $session | complete)
+    if $result.exit_code == 0 { break }
+    print $"(ansi red)($result.stderr)(ansi reset)"
+    print $"(ansi red)exit code: ($result.exit_code)(ansi reset)"
+    let next = (prompt-session-name $session "Zellij couldn't create that session. Enter a different name:")
+    if ($next | is-empty) { print "Cancelled."; return }
+    $session = $next
+  }
+  ^zellij attach -- $session
+}
+
 # Infer the current workspace name from $env.PWD, or null if not inside one.
 export def try-infer-workspace []: nothing -> string {
   let root = ($env.WORKSPACES_ROOT | path expand)
