@@ -57,18 +57,51 @@ export def --env new [
   }
 }
 
-# Attach to (or create) a Zellij session named after the workspace
+# Attach to (or create) a Zellij session for a workspace
 #
-# The workspace name is used as-is; if Zellij rejects it (too long, bad
-# characters, …) you're re-prompted for a different name. Pass --rename to name
-# the session yourself up front.
+# The session name is remembered in `.zellij_session` at the workspace root. The
+# first time (no saved name) you're prompted, prefilled with the workspace name —
+# press Enter to accept or type a replacement. Later runs reuse the saved name
+# silently. If Zellij rejects a name you're re-prompted. Use `workspace zellij
+# delete` to forget the saved name and optionally delete the session.
 export def zellij [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
-  --rename (-r)             # Prompt for a custom session name instead of the workspace name
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
-  zellij-attach $dir $name --rename=$rename
+  let saved = (read-session-name $dir)
+  if $saved != null {
+    zellij-attach $dir $saved
+  } else {
+    zellij-attach $dir $name --prompt
+  }
+}
+
+# Forget a workspace's saved Zellij session, optionally deleting the session too
+#
+# Removes the `.zellij_session` file, then — if a matching session exists —
+# prompts to delete it entirely (killed if running, resurrectable state dropped).
+#
+#   workspace zellij delete        # current workspace
+#   workspace zellij delete -c     # pick one
+export def "zellij delete" [
+  --choose (-c)             # Pick a workspace interactively instead of using the current one
+]: nothing -> nothing {
+  let name = (select-workspace $choose)
+  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let saved = (read-session-name $dir)
+  let session = ($saved | default $name)
+  remove-session-name $dir
+  if $saved != null { print $"(ansi yellow)forgot saved session '($saved)'(ansi reset)" }
+  if (zellij-session-exists $session) {
+    let answer = (["no" "yes"] | input list $"Delete Zellij session '($session)' entirely?")
+    if $answer == "yes" {
+      zellij-delete-session $session
+      print $"(ansi red)deleted Zellij session '($session)'(ansi reset)"
+    }
+  } else {
+    print $"No Zellij session '($session)' to delete."
+  }
 }
 
 # cd into an existing workspace, matched by name or partial
@@ -81,11 +114,11 @@ export def zellij [
 #   workspace switch ENG-123   # exact
 #   workspace switch sms       # substring; picks if more than one matches
 #   workspace switch           # pick interactively
-#   workspace switch -z ENG-123   # switch, then attach a Zellij session
+#
+# If the workspace has a saved Zellij session (see `workspace zellij`), you're
+# attached to it after switching.
 export def --env switch [
   name?: string   # Workspace name or partial; omit to choose interactively
-  --zellij (-z)   # After switching, attach to (or create) a Zellij session for the workspace
-  --rename (-r)   # With --zellij, prompt for a custom session name up front
 ]: nothing -> nothing {
   let sel = (select-workspaces $name --prompt "Switch to:")
   if ($sel | is-empty) {
@@ -95,8 +128,9 @@ export def --env switch [
   let name = ($sel | first)
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   cd $dir
-  if $zellij {
-    zellij-attach $dir $name --rename=$rename
+  let saved = (read-session-name $dir)
+  if $saved != null {
+    zellij-attach $dir $saved
   }
 }
 
@@ -169,12 +203,19 @@ def --env remove-workspaces [
 
   for name in $targets {
     let dir = ($env.WORKSPACES_ROOT | path join $name)
+    # Read the saved session before removing the dir — the file lives inside it.
+    let saved = (read-session-name $dir)
     if $trash {
       rm --recursive --trash $dir
       print $"(ansi yellow)trashed ($name)(ansi reset)"
     } else {
       rm --recursive --force $dir
       print $"(ansi red)deleted ($name)(ansi reset)"
+    }
+    # `trash` leaves the session resurrectable to match the recoverable dir;
+    # `delete` removes it entirely.
+    if $saved != null {
+      if $trash { zellij-kill-session $saved } else { zellij-delete-session $saved }
     }
   }
 }

@@ -19,24 +19,73 @@ export def workspace-names []: nothing -> list<string> {
 # its own session-name rules; this only sizes the visual guide, never validates.
 const ZELLIJ_RULER_WIDTH = 24
 
-# Prompt for a Zellij session name, showing `message`, the current name (red),
-# and a width ruler as a guide. Returns the entered name, trimmed ("" if empty).
-def prompt-session-name [current: string, message: string]: nothing -> string {
+# Filename, at a workspace root, storing that workspace's Zellij session name so
+# later runs reuse it without prompting.
+const ZELLIJ_SESSION_FILE = ".zellij_session"
+
+# Prompt for a Zellij session name, showing `message` and a width ruler as a
+# guide. With --default, the value is prefilled so Enter accepts it; without it,
+# empty input returns "" so the caller can treat that as cancel. Returns the
+# entered name, trimmed.
+def prompt-session-name [
+  message: string
+  --default (-d): string   # Prefill; Enter accepts it. Omitted → empty input = cancel.
+]: nothing -> string {
   let bar = (0..<($ZELLIJ_RULER_WIDTH - 1) | each {|| "-" } | str join)
   print ([
     ""
     $"(ansi light_blue)($message)(ansi reset)"
     ""
-    $"(ansi red)($current)(ansi reset)"
+    (if $default != null { $"(ansi green)Enter to keep: ($default)(ansi reset)" })
     $"(ansi light_blue)($bar)|(ansi reset) <- Limit"
-  ] | str join (char newline))
-  let entered = (input $"(ansi light_blue)" | str trim)
+  ] | compact | str join (char newline))
+  let entered = if $default != null {
+    input --default $default $"(ansi light_blue)" | str trim
+  } else {
+    input $"(ansi light_blue)" | str trim
+  }
   print (ansi reset)  # clear color, and separate this attempt from the next
   $entered
 }
 
+# Saved Zellij session name for a workspace dir, or null if none/empty.
+export def read-session-name [dir: path]: nothing -> oneof<string, nothing> {
+  let file = ($dir | path join $ZELLIJ_SESSION_FILE)
+  if not ($file | path exists) { return null }
+  let name = (open $file | str trim)
+  if ($name | is-empty) { null } else { $name }
+}
+
+# Persist the chosen Zellij session name for a workspace dir.
+def save-session-name [dir: path, name: string]: nothing -> nothing {
+  $name | save --force ($dir | path join $ZELLIJ_SESSION_FILE)
+}
+
+# Remove a workspace's saved Zellij session-name file, if present.
+export def remove-session-name [dir: path]: nothing -> nothing {
+  let file = ($dir | path join $ZELLIJ_SESSION_FILE)
+  if ($file | path exists) { rm --force $file }
+}
+
+# Kill a running Zellij session, leaving it resurrectable. Best-effort.
+export def zellij-kill-session [name: string]: nothing -> nothing {
+  let result = (^zellij kill-session -- $name | complete)
+  if $result.exit_code != 0 {
+    print $"(ansi yellow)could not kill Zellij session '($name)': ($result.stderr | str trim)(ansi reset)"
+  }
+}
+
+# Delete a Zellij session entirely: kill it if running, then drop its
+# resurrectable state. Best-effort.
+export def zellij-delete-session [name: string]: nothing -> nothing {
+  let result = (^zellij delete-session --force -- $name | complete)
+  if $result.exit_code != 0 {
+    print $"(ansi yellow)could not delete Zellij session '($name)': ($result.stderr | str trim)(ansi reset)"
+  }
+}
+
 # True if a Zellij session with this exact name currently exists.
-def zellij-session-exists [name: string]: nothing -> bool {
+export def zellij-session-exists [name: string]: nothing -> bool {
   ^zellij list-sessions --no-formatting --short
   | complete
   | get stdout
@@ -48,28 +97,30 @@ def zellij-session-exists [name: string]: nothing -> bool {
 #
 # The name is created detached first (`--create-background | complete`) so an
 # invalid name comes back as captured stderr rather than a half-torn-down
-# terminal — keeping the re-prompt in a clean terminal. Steps:
-#   1. With --rename, prompt for a name up front (cancel on empty input).
+# terminal — keeping the re-prompt in a clean terminal. The settled name is
+# saved to the workspace so later runs can reuse it. Steps:
+#   1. With --prompt, prompt for a name up front, prefilled with `session`
+#      (Enter accepts it).
 #   2. If we're already in that session, there's nothing to do.
 #   3. If the session already exists, attach to it.
 #   4. Otherwise create it detached; on success, attach.
 #   5. On failure, print the literal stderr + exit code (red), prompt for a
-#      different name, and go to 2. Empty input cancels.
+#      different name (no prefill), and go to 2. Empty input cancels.
 export def zellij-attach [
   dir: path        # Workspace directory to launch from
-  session: string  # Initial session name (usually the workspace name)
-  --rename         # Prompt for a custom name before the first attempt
+  session: string  # Session name (a saved name, or the workspace name on a first run)
+  --prompt         # Prompt for a name before the first attempt, prefilled with `session`
 ]: nothing -> nothing {
   cd $dir
   mut session = $session
-  if $rename {
-    let named = (prompt-session-name $session "Name the Zellij session:")
-    if ($named | is-empty) { print "Cancelled."; return }
-    $session = $named
+  if $prompt {
+    let named = (prompt-session-name "Name the Zellij session:" --default $session)
+    $session = (if ($named | is-empty) { $session } else { $named })
   }
   loop {
     if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
       print $"Already in Zellij session '($session)'."
+      save-session-name $dir $session
       return
     }
     if (zellij-session-exists $session) { break }
@@ -78,15 +129,16 @@ export def zellij-attach [
     if $result.exit_code == 0 { break }
     print $"(ansi red)($result.stderr)(ansi reset)"
     print $"(ansi red)exit code: ($result.exit_code)(ansi reset)"
-    let next = (prompt-session-name $session "Zellij couldn't create that session. Enter a different name:")
+    let next = (prompt-session-name "Zellij couldn't create that session. Enter a different name:")
     if ($next | is-empty) { print "Cancelled."; return }
     $session = $next
   }
+  save-session-name $dir $session
   ^zellij attach -- $session
 }
 
 # Infer the current workspace name from $env.PWD, or null if not inside one.
-export def try-infer-workspace []: nothing -> string {
+export def try-infer-workspace []: nothing -> oneof<string, nothing> {
   let root = ($env.WORKSPACES_ROOT | path expand)
   let pwd = ($env.PWD | path expand)
   if $pwd == $root or not ($pwd | str starts-with ($root | path join "")) {
@@ -145,6 +197,10 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     ""
   }
   print $"  (ansi cyan)($name)(ansi reset)($note)"
+  let saved = (read-session-name $dir)
+  if $saved != null {
+    print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
+  }
   let entries = (ls --all $dir | sort-by name)
   if ($entries | is-empty) {
     print $"    (ansi dark_gray)\(empty\)(ansi reset)"
