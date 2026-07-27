@@ -106,6 +106,9 @@ export def zellij-session-exists [name: string]: nothing -> bool {
 #   4. Otherwise create it detached; on success, attach.
 #   5. On failure, print the literal stderr + exit code (red), prompt for a
 #      different name (no prefill), and go to 2. Empty input cancels.
+#
+# Final step uses `switch-session` when already in a session (a plain attach
+# stalls when nested), else `attach`.
 export def zellij-attach [
   dir: path        # Workspace directory to launch from
   session: string  # Session name (a saved name, or the workspace name on a first run)
@@ -134,7 +137,12 @@ export def zellij-attach [
     $session = $next
   }
   save-session-name $dir $session
-  ^zellij attach -- $session
+  # Nested `attach` stalls; switch instead when already in a session.
+  if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
+    ^zellij action switch-session -- $session
+  } else {
+    ^zellij attach -- $session
+  }
 }
 
 # Infer the current workspace name from $env.PWD, or null if not inside one.
