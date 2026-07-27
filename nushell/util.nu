@@ -5,14 +5,30 @@
 # of the public `workspace` overlay — the user-facing command surface lives in
 # workspace.nu.
 
-# All workspace names (immediate subdirs, excluding "_"-prefixed), sorted.
+# The meta workspace's name: the workbench repo root's basename.
+export def workspace-home []: nothing -> string {
+  $env.WORKSPACES_ROOT | path dirname | path basename
+}
+
+# Absolute dir for a workspace name; the meta home maps to the repo root.
+export def workspace-dir [name: string]: nothing -> path {
+  if $name == (workspace-home) {
+    $env.WORKSPACES_ROOT | path dirname
+  } else {
+    $env.WORKSPACES_ROOT | path join $name
+  }
+}
+
+# All workspace names: the meta home first, then immediate subdirs (excluding
+# "_"-prefixed), sorted.
 export def workspace-names []: nothing -> list<string> {
-  ls $env.WORKSPACES_ROOT
-  | where type == dir
-  | get name
-  | each { $in | path basename }
-  | where {|n| not ($n | str starts-with "_") }
-  | sort
+  let subdirs = (ls $env.WORKSPACES_ROOT
+    | where type == dir
+    | get name
+    | each { $in | path basename }
+    | where {|n| not ($n | str starts-with "_") }
+    | sort)
+  [(workspace-home)] ++ $subdirs
 }
 
 # Width of the on-screen ruler guide in the session-name prompt. Zellij enforces
@@ -97,7 +113,7 @@ export def zellij-session-exists [name: string]: nothing -> bool {
 #
 # The name is created detached first (`--create-background | complete`) so an
 # invalid name comes back as captured stderr rather than a half-torn-down
-# terminal — keeping the re-prompt in a clean terminal. The settled name is
+# terminal, keeping the re-prompt in a clean terminal. The settled name is
 # saved to the workspace so later runs can reuse it. Steps:
 #   1. With --prompt, prompt for a name up front, prefilled with `session`
 #      (Enter accepts it).
@@ -146,26 +162,39 @@ export def zellij-attach [
 }
 
 # Infer the current workspace name from $env.PWD, or null if not inside one.
+#
+# A path under workspaces/<name>/… resolves to that workspace; anywhere else
+# inside the workbench repo (including the root and workspaces/ itself) resolves
+# to the meta home workspace.
 export def try-infer-workspace []: nothing -> oneof<string, nothing> {
-  let root = ($env.WORKSPACES_ROOT | path expand)
+  let ws_root = ($env.WORKSPACES_ROOT | path expand)
+  let home_dir = ($ws_root | path dirname)
   let pwd = ($env.PWD | path expand)
-  if $pwd == $root or not ($pwd | str starts-with ($root | path join "")) {
-    return null
+  if ($pwd != $ws_root) and ($pwd | str starts-with ($ws_root | path join "")) {
+    return ($pwd | path relative-to $ws_root | path split | first)
   }
-  $pwd | path relative-to $root | path split | first
+  if ($pwd == $home_dir) or ($pwd | str starts-with ($home_dir | path join "")) {
+    return (workspace-home)
+  }
+  null
 }
 
-# List the git repos (immediate subdirectories containing .git) in a workspace.
+# List the git repos in a workspace. Normal workspaces contain a repo per
+# immediate subdirectory; the meta home workspace's only repo is the root itself.
 export def workspace-repos [name: string]: nothing -> list<path> {
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   if not ($dir | path exists) {
     error make { msg: $"Workspace '($name)' does not exist." }
   }
-  ls $dir
-  | where type == dir
-  | get name
-  | where {|p| ($p | path join ".git" | path exists) }
-  | sort
+  if $name == (workspace-home) {
+    if ($dir | path join ".git" | path exists) { [$dir] } else { [] }
+  } else {
+    ls $dir
+    | where type == dir
+    | get name
+    | where {|p| ($p | path join ".git" | path exists) }
+    | sort
+  }
 }
 
 # Branch + porcelain status for a single repo path.
@@ -196,7 +225,17 @@ def match-workspaces [query: string]: nothing -> list<string> {
 # Print a workspace's name (flagging dirty repos) followed by its full contents,
 # including hidden files, so the user sees exactly what a delete/trash removes.
 def print-workspace-contents [name: string]: nothing -> nothing {
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
+  # The meta workspace's repo is never removed, so don't list it as deletable
+  # contents; just flag the session that will go.
+  if $name == (workspace-home) {
+    print $"  (ansi cyan)($name)(ansi reset) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
+    let saved = (read-session-name $dir)
+    if $saved != null {
+      print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
+    }
+    return
+  }
   let repos = (workspace-repos $name | each {|r| repo-summary $r })
   let dirty = ($repos | where status == "dirty" | length)
   let note = if $dirty > 0 {
