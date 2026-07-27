@@ -39,6 +39,22 @@ export def list []: nothing -> table {
   }
 }
 
+# Summarize a workspace: name, path, saved Zellij session, and repos
+#
+# Defaults to the current workspace; pass --choose to pick one.
+export def info [
+  --choose (-c)   # Pick a workspace interactively instead of using the current one
+]: nothing -> record {
+  let name = (select-workspace $choose)
+  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  {
+    workspace: $name
+    path: $dir
+    session: (read-session-name $dir)
+    repos: (workspace-repos $name | each {|r| repo-summary $r })
+  }
+}
+
 # Create a new workspace and cd into it, optionally cloning repos
 export def --env new [
   name: string       # Workspace directory name
