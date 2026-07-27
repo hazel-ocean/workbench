@@ -24,17 +24,12 @@ export def root []: nothing -> path {
   $env.WORKSPACES_ROOT
 }
 
-# List all workspaces with each repo's branch and working-tree status
+# List all workspaces (meta home first) with each repo's branch and status
 export def list []: nothing -> table {
-  ls $env.WORKSPACES_ROOT
-  | where type == dir
-  | get name
-  | where {|p| not ($p | path basename | str starts-with "_") }
-  | sort
-  | each {|p|
+  workspace-names | each {|name|
     {
-      workspace: ($p | path basename)
-      repos: (workspace-repos ($p | path basename) | each {|r| repo-summary $r })
+      workspace: $name
+      repos: (workspace-repos $name | each {|r| repo-summary $r })
     }
   }
 }
@@ -46,7 +41,7 @@ export def info [
   --choose (-c)   # Pick a workspace interactively instead of using the current one
 ]: nothing -> record {
   let name = (select-workspace $choose)
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   {
     workspace: $name
     path: $dir
@@ -76,15 +71,15 @@ export def --env new [
 # Attach to (or create) a Zellij session for a workspace
 #
 # The session name is remembered in `.zellij_session` at the workspace root. The
-# first time (no saved name) you're prompted, prefilled with the workspace name —
-# press Enter to accept or type a replacement. Later runs reuse the saved name
+# first time (no saved name) you're prompted, prefilled with the workspace name.
+# Press Enter to accept or type a replacement. Later runs reuse the saved name
 # silently. If Zellij rejects a name you're re-prompted. Use `workspace zellij
 # delete` to forget the saved name and optionally delete the session.
 export def zellij [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   let saved = (read-session-name $dir)
   if $saved != null {
     zellij-attach $dir $saved
@@ -95,7 +90,7 @@ export def zellij [
 
 # Forget a workspace's saved Zellij session, optionally deleting the session too
 #
-# Removes the `.zellij_session` file, then — if a matching session exists —
+# Removes the `.zellij_session` file, then, if a matching session exists,
 # prompts to delete it entirely (killed if running, resurrectable state dropped).
 #
 #   workspace zellij delete        # current workspace
@@ -104,7 +99,7 @@ export def "zellij delete" [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   let saved = (read-session-name $dir)
   let session = ($saved | default $name)
   remove-session-name $dir
@@ -142,7 +137,7 @@ export def --env switch [
     return
   }
   let name = ($sel | first)
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   cd $dir
   let saved = (read-session-name $dir)
   if $saved != null {
@@ -210,17 +205,32 @@ def --env remove-workspaces [
     return
   }
 
-  # If the shell is sitting inside one of the targets, step back to the root so
-  # we don't strand the session in a deleted directory.
+  # If the shell is sitting inside a target we'll actually remove, step back to
+  # the root so we don't strand the session in a deleted directory. The meta home
+  # is never removed, so it doesn't count.
+  let removed = ($targets | where {|t| $t != (workspace-home)})
   let current = (try-infer-workspace)
-  if $current != null and ($current in $targets) {
+  if $current != null and ($current in $removed) {
     cd $env.WORKSPACES_ROOT
   }
 
   for name in $targets {
-    let dir = ($env.WORKSPACES_ROOT | path join $name)
-    # Read the saved session before removing the dir — the file lives inside it.
+    let dir = (workspace-dir $name)
+    # Read the saved session before removing the dir; the file lives inside it.
     let saved = (read-session-name $dir)
+    # The meta home's repo is never removed, only its session and saved name.
+    if $name == (workspace-home) {
+      remove-session-name $dir
+      let note = if $saved != null {
+        if $trash { zellij-kill-session $saved } else { zellij-delete-session $saved }
+        let did = if $trash { "killed" } else { "deleted" }
+        $"Zellij session '($saved)' ($did)"
+      } else {
+        "no Zellij session"
+      }
+      print $"(ansi yellow)($name): repo preserved; ($note)(ansi reset)"
+      continue
+    }
     if $trash {
       rm --recursive --trash $dir
       print $"(ansi yellow)trashed ($name)(ansi reset)"
@@ -245,7 +255,10 @@ export def clone [
   --choose (-c)     # Pick a target workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  if $name == (workspace-home) {
+    error make { msg: "Cannot clone into the meta workspace; pick a real workspace." }
+  }
+  let dir = (workspace-dir $name)
   if not ($dir | path exists) {
     error make {
       msg: $"Workspace '($name)' does not exist. Create it with `workspace new`."
