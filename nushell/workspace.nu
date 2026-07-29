@@ -29,6 +29,7 @@ export def list []: nothing -> table {
   workspace-names | each {|name|
     {
       workspace: $name
+      session: (read-session-name (workspace-dir $name))
       repos: (workspace-repos $name | each {|r| repo-summary $r })
     }
   }
@@ -112,6 +113,63 @@ export def "zellij delete" [
     }
   } else {
     print $"No Zellij session '($session)' to delete."
+  }
+}
+
+# Rename a workspace's Zellij session and keep the saved name in sync
+#
+# Renames the live session in Zellij, then rewrites `.zellij_session` so later
+# `workspace zellij` runs reuse the new name. Pass the new name, or omit it to
+# be prompted (prefilled with the current name; Enter keeps it, empty cancels).
+# Only a running session can be renamed; an EXITED/resurrectable one is left
+# untouched (attach it first with `workspace zellij`).
+#
+#   workspace zellij rename my-new-name   # current workspace
+#   workspace zellij rename -c            # pick one, prompt for the name
+export def "zellij rename" [
+  new?: string              # New session name; omit to be prompted
+  --choose (-c)             # Pick a workspace interactively instead of using the current one
+]: nothing -> nothing {
+  let name = (select-workspace $choose)
+  let dir = (workspace-dir $name)
+  let old = (read-session-name $dir | default $name)
+  let target = if $new != null {
+    $new
+  } else {
+    prompt-session-name $"Rename Zellij session '($old)' to:" --default $old
+  }
+  if ($target | is-empty) or ($target == $old) {
+    print "Nothing to do."
+    return
+  }
+  if not (zellij-session-exists $old) {
+    print $"No Zellij session '($old)' to rename."
+    return
+  }
+  if not (zellij-rename-session $old $target) { return }
+  save-session-name $dir $target
+  print $"(ansi green)renamed Zellij session '($old)' -> '($target)'(ansi reset)"
+}
+
+# Kill a workspace's running Zellij session, leaving it resurrectable
+#
+# Tears down the running session but keeps both the resurrectable state and the
+# saved `.zellij_session` name, so `workspace zellij` can bring it back later.
+# Use `workspace zellij delete` instead to forget the name and drop the state.
+#
+#   workspace zellij kill        # current workspace
+#   workspace zellij kill -c     # pick one
+export def "zellij kill" [
+  --choose (-c)             # Pick a workspace interactively instead of using the current one
+]: nothing -> nothing {
+  let name = (select-workspace $choose)
+  let dir = (workspace-dir $name)
+  let session = (read-session-name $dir | default $name)
+  if (zellij-session-exists $session) {
+    zellij-kill-session $session
+    print $"(ansi yellow)killed Zellij session '($session)' \(resurrectable\)(ansi reset)"
+  } else {
+    print $"No Zellij session '($session)' to kill."
   }
 }
 

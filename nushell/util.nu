@@ -43,7 +43,7 @@ const ZELLIJ_SESSION_FILE = ".zellij_session"
 # guide. With --default, the value is prefilled so Enter accepts it; without it,
 # empty input returns "" so the caller can treat that as cancel. Returns the
 # entered name, trimmed.
-def prompt-session-name [
+export def prompt-session-name [
   message: string
   --default (-d): string   # Prefill; Enter accepts it. Omitted → empty input = cancel.
 ]: nothing -> string {
@@ -73,7 +73,7 @@ export def read-session-name [dir: path]: nothing -> oneof<string, nothing> {
 }
 
 # Persist the chosen Zellij session name for a workspace dir.
-def save-session-name [dir: path, name: string]: nothing -> nothing {
+export def save-session-name [dir: path, name: string]: nothing -> nothing {
   $name | save --force ($dir | path join $ZELLIJ_SESSION_FILE)
 }
 
@@ -98,6 +98,18 @@ export def zellij-delete-session [name: string]: nothing -> nothing {
   if $result.exit_code != 0 {
     print $"(ansi yellow)could not delete Zellij session '($name)': ($result.stderr | str trim)(ansi reset)"
   }
+}
+
+# Rename a live Zellij session. Best-effort; returns true on success. Only works
+# while the session's server is running (an EXITED/resurrectable session has no
+# server to act on), so callers should not persist the new name on a false.
+export def zellij-rename-session [from: string, to: string]: nothing -> bool {
+  let result = (^zellij --session $from action rename-session -- $to | complete)
+  if $result.exit_code != 0 {
+    print $"(ansi yellow)could not rename Zellij session '($from)' -> '($to)': ($result.stderr | str trim)(ansi reset)"
+    return false
+  }
+  true
 }
 
 # True if a Zellij session with this exact name currently exists.
