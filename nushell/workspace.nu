@@ -126,7 +126,7 @@ export def "zellij delete" [
 #
 #   workspace zellij rename my-new-name   # current workspace
 #   workspace zellij rename -c            # pick one, prompt for the name
-export def "zellij rename" [
+export def --env "zellij rename" [
   new?: string              # New session name; omit to be prompted
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
@@ -148,6 +148,10 @@ export def "zellij rename" [
   }
   if not (zellij-rename-session $old $target) { return }
   save-session-name $dir $target
+  sync-clawd-session-id $old $target
+  if (($env.ZELLIJ_SESSION_NAME? | default "") == $old) {
+    $env.ZELLIJ_SESSION_NAME = $target
+  }
   print $"(ansi green)renamed Zellij session '($old)' -> '($target)'(ansi reset)"
 }
 

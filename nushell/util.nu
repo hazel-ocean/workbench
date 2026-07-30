@@ -83,6 +83,20 @@ export def remove-session-name [dir: path]: nothing -> nothing {
   if ($file | path exists) { rm --force $file }
 }
 
+# Rewrite the zellij_session_id in clawd-back's per-session state files after a
+# rename, so notify/click keep resolving the right pane. Best-effort.
+export def sync-clawd-session-id [old: string, new: string]: nothing -> nothing {
+  let dir = ($env.HOME | path join ".cache" "clawd-back")
+  if not ($dir | path exists) { return }
+  for file in (glob ($dir | path join "*.json")) {
+    let state = (try { open $file } catch { null })
+    if $state == null { continue }
+    if (($state | get zellij_session_id? | default "") == $old) {
+      $state | update zellij_session_id $new | to json | save --force $file
+    }
+  }
+}
+
 # Kill a running Zellij session, leaving it resurrectable. Best-effort.
 export def zellij-kill-session [name: string]: nothing -> nothing {
   let result = (^zellij kill-session -- $name | complete)
