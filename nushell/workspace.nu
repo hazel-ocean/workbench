@@ -62,7 +62,7 @@ export def info [
 # Create a new workspace and cd into it, optionally cloning repos
 export def --env new [
   name: string       # Workspace directory name
-  ...repos: string   # Repos to clone immediately (name or owner/name)
+  ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>]
 ]: nothing -> nothing {
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   if ($dir | path exists) {
@@ -316,12 +316,57 @@ def --env remove-workspaces [
   }
 }
 
+# Parse a repo spec into a clone slug and an optional ref to check out.
+#
+# Accepted forms (org defaults to $env.WORKSPACES_GH_ORG when omitted):
+#   <repo>                 <org>/<repo>
+#   <repo>@<ref>           <org>/<repo>@<ref>    ref = tag or branch
+#   <repo>#<pr>            <org>/<repo>#<pr>     pr  = PR number
+#
+# The ref begins at the first `@` or `#`; everything before it is the
+# `[<org>/]<repo>` name. Splitting there (rather than on `/`) keeps branch names
+# that contain slashes intact. Returns { slug, ref: "@<ref>" | "#<pr>" | null }.
+def parse-repo-spec [spec: string]: nothing -> record {
+  let sigils = ([($spec | str index-of "@") ($spec | str index-of "#")]
+    | where {|i| $i >= 0 })
+  let cut = if ($sigils | is-empty) { null } else { $sigils | math min }
+  let name = if $cut == null { $spec } else { $spec | str substring 0..<$cut }
+  let ref = if $cut == null { null } else { $spec | str substring $cut.. }
+  let slug = if ($name | str contains "/") {
+    $name
+  } else {
+    $"($env.WORKSPACES_GH_ORG)/($name)"
+  }
+  { slug: $slug, ref: $ref }
+}
+
+# Check out a ref inside a freshly cloned repo. `@<name>` is a tag or branch
+# (git checkout handles both, DWIM-tracking a remote branch); `#<num>` is a PR
+# checked out via `gh pr checkout` from within the repo.
+def checkout-ref [repo: path, ref: string]: nothing -> nothing {
+  let value = ($ref | str substring 1..)
+  if ($ref | str starts-with "#") {
+    print $"(ansi green)checkout PR #($value)(ansi reset)"
+    do { cd $repo; ^gh pr checkout $value }
+  } else {
+    print $"(ansi green)checkout ($value)(ansi reset)"
+    ^git -C $repo checkout $value
+  }
+}
+
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
-# Bare names are resolved against $env.WORKSPACES_GH_ORG; pass owner/name to
-# override the org for a single repo.
+# Each repo is `[<org>/]<repo>[<ref>]`. A bare name is resolved against
+# $env.WORKSPACES_GH_ORG; prefix `owner/` to override the org. An optional
+# trailing ref checks out after cloning: `@<tag-or-branch>` or `#<pr-number>`.
+#
+#   workspace clone web-app
+#   workspace clone OneSignal/web-app
+#   workspace clone web-app@v1.2.3        # tag or branch
+#   workspace clone web-app#1234          # PR number
+#   workspace clone OneSignal/web-app@my-branch
 export def clone [
-  ...repos: string  # Repos to clone (name or owner/name)
+  ...repos: string  # Repos to clone: [<org>/]<repo>[@<tag|branch> | #<pr>]
   --choose (-c)     # Pick a target workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
@@ -338,18 +383,19 @@ export def clone [
     error make { msg: "No repos given. Usage: workspace clone <repo>..." }
   }
   for repo in $repos {
-    let slug = if ($repo | str contains "/") {
-      $repo
-    } else {
-      $"($env.WORKSPACES_GH_ORG)/($repo)"
-    }
+    let parsed = (parse-repo-spec $repo)
+    let slug = $parsed.slug
     let target = ($dir | path join ($slug | path basename))
     if ($target | path exists) {
       print $"(ansi yellow)skip ($slug) \(already cloned\)(ansi reset)"
       continue
     }
-    print $"(ansi green)clone ($slug)(ansi reset)"
+    let suffix = if $parsed.ref != null { $" ($parsed.ref)" } else { "" }
+    print $"(ansi green)clone ($slug)($suffix)(ansi reset)"
     ^gh repo clone $slug $target
+    if $parsed.ref != null {
+      checkout-ref $target $parsed.ref
+    }
   }
 }
 
