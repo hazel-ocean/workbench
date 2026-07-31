@@ -135,6 +135,40 @@ export def zellij-session-exists [name: string]: nothing -> bool {
   | any {|s| ($s | str trim) == $name }
 }
 
+# All Zellij sessions as {name, state} rows, where state is "active" for a
+# running session or "exited" for a resurrectable one. `--short` is avoided
+# because it drops the EXITED marker we classify on. Best-effort: any failure
+# (or no sessions) yields []. Real session lines always carry a "[Created ...]"
+# stamp, which also filters out the "No active zellij sessions" notice.
+export def zellij-sessions []: nothing -> table {
+  let result = (^zellij list-sessions --no-formatting | complete)
+  if $result.exit_code != 0 { return [] }
+  $result.stdout
+  | lines
+  | each {|line| $line | str trim }
+  | where {|line| $line | str contains "[Created" }
+  | each {|line|
+      {
+        name: ($line | split row " " | first)
+        state: (if ($line | str contains "EXITED") { "exited" } else { "active" })
+      }
+    }
+}
+
+# State of a saved session name against the session table:
+#   name is active  → "active"  (running)
+#   name is exited  → "exited"  (resurrectable via attach)
+#   name not listed → null      (saved name matches no Zellij session)
+#
+# Callers guard for "no session saved" (a null name) themselves before calling.
+export def session-state [
+  saved: string    # A workspace's saved session name
+  sessions: table  # Rows from `zellij-sessions`
+]: nothing -> oneof<string, nothing> {
+  let match = ($sessions | where name == $saved)
+  if ($match | is-empty) { "offline" } else { $match | first | get state }
+}
+
 # Attach to (or create) a Zellij session in `dir`, re-prompting on a bad name.
 #
 # The name is created detached first (`--create-background | complete`) so an
