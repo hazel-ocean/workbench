@@ -25,11 +25,17 @@ export def root []: nothing -> path {
 }
 
 # List all workspaces (meta home first) with each repo's branch and status
+#
+# The `state` column reports the saved Zellij session's status (active / exited
+# / gone), or is empty when no session is saved. See `session-state`.
 export def list []: nothing -> table {
+  let sessions = (zellij-sessions)
   workspace-names | each {|name|
+    let saved = (read-session-name (workspace-dir $name))
     {
       workspace: $name
-      session: (read-session-name (workspace-dir $name))
+      session: $saved
+      state: (if ($saved | is-not-empty) { session-state $saved $sessions })
       repos: (workspace-repos $name | each {|r| repo-summary $r })
     }
   }
@@ -43,10 +49,12 @@ export def info [
 ]: nothing -> record {
   let name = (select-workspace $choose)
   let dir = (workspace-dir $name)
+  let saved = (read-session-name $dir)
   {
     workspace: $name
     path: $dir
-    session: (read-session-name $dir)
+    session: $saved
+    state: (if ($saved | is-not-empty) { session-state $saved (zellij-sessions) })
     repos: (workspace-repos $name | each {|r| repo-summary $r })
   }
 }
