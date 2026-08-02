@@ -169,6 +169,23 @@ export def session-state [
   if ($match | is-empty) { "offline" } else { $match | first | get state }
 }
 
+# Paint `text` by a session state: an active meta workbench is purple, an active
+# workspace is blue, a dormant saved session is red (both "exited" — still
+# resurrectable — and "offline" — the saved name is gone from Zellij entirely).
+# When there is no saved session at all (null state), `text` is returned as-is.
+export def paint-state [
+  text: string                       # The string to color
+  state: oneof<string, nothing>      # A `session-state` value, or null for no session
+  is_home: bool                      # Whether this is the meta workbench workspace
+]: nothing -> string {
+  let color = match $state {
+    "active" => (if $is_home { (ansi purple) } else { (ansi blue) })
+    "exited" | "offline" => (ansi red)
+    _ => null
+  }
+  if $color == null { $text } else { $"($color)($text)(ansi reset)" }
+}
+
 # Attach to (or create) a Zellij session in `dir`, re-prompting on a bad name.
 #
 # The name is created detached first (`--create-background | complete`) so an
@@ -341,6 +358,7 @@ export def select-workspaces [
   --multi (-m)                          # Allow selecting several; off → single
   --confirm                             # Require a yes/no gate after selection
   --list-contents                       # Print each selection's contents first
+  --color-state                         # Color picker entries by their Zellij session state
   --prompt (-p): string = "Workspace:"  # Picker title + confirm/contents header
 ]: nothing -> list<string> {
   let all = (workspace-names)
@@ -356,6 +374,23 @@ export def select-workspaces [
 
   let selection = if $direct {
     $matches
+  } else if $color_state {
+    # Show each entry colored by session state. `--display` colors the label but
+    # `input list` still returns the original record, so we map back to names.
+    let sessions = (zellij-sessions)
+    let home = (workspace-home)
+    let items = ($candidates | each {|n|
+      let saved = (read-session-name (workspace-dir $n))
+      let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
+      { name: $n, label: (paint-state $n $state ($n == $home)) }
+    })
+    let disp = {|it| $it.label }
+    if $multi {
+      $items | input list --multi --fuzzy --display $disp $prompt | each {|it| $it.name }
+    } else {
+      let one = ($items | input list --fuzzy --display $disp $prompt)
+      if $one == null { [] } else { [$one.name] }
+    }
   } else if $multi {
     $candidates | input list --multi --fuzzy $prompt
   } else {

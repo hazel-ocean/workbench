@@ -30,12 +30,14 @@ export def root []: nothing -> path {
 # / gone), or is empty when no session is saved. See `session-state`.
 export def list []: nothing -> table {
   let sessions = (zellij-sessions)
+  let home = (workspace-home)
   workspace-names | each {|name|
     let saved = (read-session-name (workspace-dir $name))
+    let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
     {
       workspace: $name
-      session: $saved
-      state: (if ($saved | is-not-empty) { session-state $saved $sessions })
+      session: (if ($saved | is-not-empty) { paint-state $saved $state ($name == $home) })
+      state: $state
       repos: (workspace-repos $name | each {|r| repo-summary $r })
     }
   }
@@ -201,7 +203,7 @@ export def "zellij kill" [
 export def --env switch [
   name?: string   # Workspace name or partial; omit to choose interactively
 ]: nothing -> nothing {
-  let sel = (select-workspaces $name --prompt "Switch to:")
+  let sel = (select-workspaces $name --prompt "Switch to:" --color-state)
   if ($sel | is-empty) {
     print "Nothing selected."
     return
