@@ -29,7 +29,7 @@ help workspace                   # list commands
 workspace new ABC-123 web-app api-service            # create + cd + clone
 workspace clone some-repo                            # clone into current workspace
 workspace clone other-org/their-repo                 # override the default org
-workspace switch api                                 # cd into a workspace (name/partial; picker if ambiguous or omitted)
+workspace attach api                                 # cd into a workspace (name/partial; picker if ambiguous or omitted)
 workspace delete api                                 # permanently remove (fuzzy multi-select + contents preview + confirm)
 workspace trash api                                  # same, but route through the system trash (recoverable)
 workspace zellij                                     # attach to / create a zellij session for the workspace
