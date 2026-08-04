@@ -126,43 +126,83 @@ export def "zellij delete" [
   }
 }
 
-# Rename a workspace's Zellij session and keep the saved name in sync
+# Rename a workspace's Zellij session, or reconcile a rename made in Zellij itself
 #
-# Renames the live session in Zellij, then rewrites `.zellij_session` so later
-# `workspace zellij` runs reuse the new name. Pass the new name, or omit it to
-# be prompted (prefilled with the current name; Enter keeps it, empty cancels).
-# Only a running session can be renamed; an EXITED/resurrectable one is left
-# untouched (attach it first with `workspace zellij`).
+# With a NAME argument: renames the live session in Zellij and rewrites
+# `.zellij_session` so later `workspace zellij` runs reuse the new name. Only a
+# running session can be renamed; an EXITED/resurrectable one is left untouched
+# (attach it first with `workspace zellij`).
 #
-#   workspace zellij rename my-new-name   # current workspace
-#   workspace zellij rename -c            # pick one, prompt for the name
+# With NO argument: reconcile-only. If you renamed the session from Zellij's own
+# UI, the saved `.zellij_session` name goes stale; this offers to update the saved
+# state to the live session name. It then offers to set the Ghostty tab title to
+# match. Both offers are confirm-first and appear only when there's an actual
+# difference, so a clean state prints "Nothing to do."
+#
+#   workspace zellij rename my-new-name   # rename the live session
+#   workspace zellij rename               # reconcile saved state + Ghostty title
+#   workspace zellij rename -c            # reconcile a chosen workspace
 export def --env "zellij rename" [
-  new?: string              # New session name; omit to be prompted
+  new?: string              # New session name; omit to reconcile only
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   let dir = (workspace-dir $name)
-  let old = (read-session-name $dir | default $name)
-  let target = if $new != null {
-    $new
-  } else {
-    prompt-session-name $"Rename Zellij session '($old)' to:" --default $old
+  mut saved = (read-session-name $dir | default $name)
+  mut acted = false
+
+  # Reconcile a rename made in Zellij's own UI. `(current)` reflects the pane
+  # we're in, so only trust it when acting on the current workspace, not --choose.
+  let current = (if $choose { null } else { zellij-current-session })
+  if $current != null and $current != $saved {
+    let answer = (["no" "yes"] | input list
+      $"Saved session is '($saved)' but the live Zellij session is '($current)'. Update saved state to '($current)'?")
+    if $answer == "yes" {
+      save-session-name $dir $current
+      sync-clawd-session-id $saved $current
+      if (($env.ZELLIJ_SESSION_NAME? | default "") == $saved) {
+        $env.ZELLIJ_SESSION_NAME = $current
+      }
+      print $"(ansi green)reconciled saved session '($saved)' -> '($current)'(ansi reset)"
+      $saved = $current
+      $acted = true
+    }
   }
-  if ($target | is-empty) or ($target == $old) {
-    print "Nothing to do."
-    return
+
+  # Explicit rename of the live session to the given name.
+  if $new != null {
+    if ($new | is-empty) or ($new == $saved) {
+      if not $acted { print "Nothing to do." }
+      return
+    }
+    if not (zellij-session-exists $saved) {
+      print $"No Zellij session '($saved)' to rename."
+      return
+    }
+    if not (zellij-rename-session $saved $new) { return }
+    save-session-name $dir $new
+    sync-clawd-session-id $saved $new
+    if (($env.ZELLIJ_SESSION_NAME? | default "") == $saved) {
+      $env.ZELLIJ_SESSION_NAME = $new
+    }
+    print $"(ansi green)renamed Zellij session '($saved)' -> '($new)'(ansi reset)"
+    $saved = $new
+    $acted = true
   }
-  if not (zellij-session-exists $old) {
-    print $"No Zellij session '($old)' to rename."
-    return
+
+  # Offer to bring the Ghostty tab title in line with the session name.
+  let title = (ghostty-title)
+  if $title != null and $title != $saved {
+    let answer = (["no" "yes"] | input list
+      $"Ghostty title is '($title)'. Set it to '($saved)'?")
+    if $answer == "yes" {
+      ghostty-set-title $saved
+      print $"(ansi green)set Ghostty title to '($saved)'(ansi reset)"
+      $acted = true
+    }
   }
-  if not (zellij-rename-session $old $target) { return }
-  save-session-name $dir $target
-  sync-clawd-session-id $old $target
-  if (($env.ZELLIJ_SESSION_NAME? | default "") == $old) {
-    $env.ZELLIJ_SESSION_NAME = $target
-  }
-  print $"(ansi green)renamed Zellij session '($old)' -> '($target)'(ansi reset)"
+
+  if not $acted { print "Nothing to do." }
 }
 
 # Kill a workspace's running Zellij session, leaving it resurrectable
@@ -194,16 +234,16 @@ export def "zellij kill" [
 # More than one candidate — or omitting the name entirely — opens a picker;
 # a query that matches nothing falls back to a picker over all workspaces.
 #
-#   workspace switch ENG-123   # exact
-#   workspace switch sms       # substring; picks if more than one matches
-#   workspace switch           # pick interactively
+#   workspace attach ENG-123   # exact
+#   workspace attach sms       # substring; picks if more than one matches
+#   workspace attach           # pick interactively
 #
 # If the workspace has a saved Zellij session (see `workspace zellij`), you're
-# attached to it after switching.
-export def --env switch [
+# attached to it after attaching.
+export def --env attach [
   name?: string   # Workspace name or partial; omit to choose interactively
 ]: nothing -> nothing {
-  let sel = (select-workspaces $name --prompt "Switch to:" --color-state)
+  let sel = (select-workspaces $name --prompt "Attach to:" --color-state)
   if ($sel | is-empty) {
     print "Nothing selected."
     return

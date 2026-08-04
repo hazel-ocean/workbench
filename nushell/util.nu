@@ -83,16 +83,25 @@ export def remove-session-name [dir: path]: nothing -> nothing {
   if ($file | path exists) { rm --force $file }
 }
 
-# Rewrite the zellij_session_id in clawd-back's per-session state files after a
-# rename, so notify/click keep resolving the right pane. Best-effort.
+# Rewrite the Zellij session name in clawd-back's per-session state files after a
+# rename, so notify/click keep resolving the right pane. Handles both the current
+# nested schema (`multiplexer.session`) and the legacy flat `zellij_session_id`.
+# Best-effort.
 export def sync-clawd-session-id [old: string, new: string]: nothing -> nothing {
   let dir = ($env.HOME | path join ".cache" "clawd-back")
   if not ($dir | path exists) { return }
   for file in (glob ($dir | path join "*.json")) {
     let state = (try { open $file } catch { null })
     if $state == null { continue }
-    if (($state | get zellij_session_id? | default "") == $old) {
-      $state | update zellij_session_id $new | to json | save --force $file
+    mut next = $state
+    if (($next | get multiplexer?.session? | default "") == $old) {
+      $next = ($next | update multiplexer.session $new)
+    }
+    if (($next | get zellij_session_id? | default "") == $old) {
+      $next = ($next | update zellij_session_id $new)
+    }
+    if $next != $state {
+      $next | to json | save --force $file
     }
   }
 }
@@ -149,10 +158,48 @@ export def zellij-sessions []: nothing -> table {
   | where {|line| $line | str contains "[Created" }
   | each {|line|
       {
-        name: ($line | split row " " | first)
+        # Split on " [Created" (not " ") so multi-word session names survive.
+        name: ($line | split row " [Created" | first | str trim)
         state: (if ($line | str contains "EXITED") { "exited" } else { "active" })
       }
     }
+}
+
+# The live name of the pane's own Zellij session, or null when not inside Zellij
+# (or on any failure). `zellij list-sessions` marks the attached session with a
+# trailing "(current)"; that marker stays correct after a Zellij-UI rename, while
+# $env.ZELLIJ_SESSION_NAME goes stale (captured at pane spawn). Split on
+# " [Created" rather than " " so multi-word session names survive.
+export def zellij-current-session []: nothing -> oneof<string, nothing> {
+  let result = (^zellij list-sessions --no-formatting | complete)
+  if $result.exit_code != 0 { return null }
+  let line = ($result.stdout | lines | where {|l| $l | str contains "(current)" } | get 0?)
+  if $line == null { return null }
+  let name = ($line | str trim | split row " [Created" | first | str trim)
+  if ($name | is-empty) { null } else { $name }
+}
+
+# The focused Ghostty window's current title, or null if it can't be read (not
+# Ghostty, no osascript, no window). Reading the `name` works even though setting
+# it does not. Best-effort.
+export def ghostty-title []: nothing -> oneof<string, nothing> {
+  let result = (^osascript -e 'tell application "Ghostty" to get name of front window' | complete)
+  if $result.exit_code != 0 { return null }
+  let title = ($result.stdout | str trim)
+  if ($title | is-empty) { null } else { $title }
+}
+
+# Pin the focused Ghostty tab's title to `title` via the "Change Tab Title..."
+# action (see the AppleScript for why UI automation is the only durable path).
+# Best-effort: needs Accessibility permission and the target tab focused, so a
+# failure is noted, not fatal.
+export def ghostty-set-title [title: string]: nothing -> nothing {
+  const script = (path self | path dirname | path dirname
+    | path join "applescript" "ghostty-set-title.applescript")
+  let result = (^osascript $script $title | complete)
+  if $result.exit_code != 0 {
+    print $"(ansi yellow)could not set Ghostty title to '($title)': ($result.stderr | str trim)(ansi reset)"
+  }
 }
 
 # State of a saved session name against the session table:
