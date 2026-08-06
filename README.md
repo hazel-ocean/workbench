@@ -32,7 +32,7 @@ workspace clone other-org/their-repo                 # override the default org
 workspace attach api                                 # cd into a workspace (name/partial; picker if ambiguous or omitted)
 workspace delete api                                 # permanently remove (fuzzy multi-select + contents preview + confirm)
 workspace trash api                                  # same, but route through the system trash (recoverable)
-workspace zellij                                     # attach to / create a zellij session for the workspace
+workspace zellij attach                              # attach to / create a zellij session for the workspace
 workspace list                                       # all workspaces, with each repo's branch + status
 workspace root                                       # workspaces root path
 ```
