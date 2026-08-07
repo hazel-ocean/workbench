@@ -1,9 +1,9 @@
 # Workspace utility commands.
 #
-# `workspace.nu` pulls these in with `use util.nu *`. Because that is a plain
+# `workspace/mod.nu` pulls these in with `use util.nu *`. Because that is a plain
 # `use` (not `export use`), they stay internal to the workspace module and out
-# of the public `workspace` overlay — the user-facing command surface lives in
-# workspace.nu.
+# of the public `workspace` overlay: the user-facing command surface lives in
+# workspace/mod.nu.
 
 # The meta workspace's name: the workbench repo root's basename.
 export def workspace-home []: nothing -> string {
@@ -203,22 +203,22 @@ export def ghostty-set-title [title: string]: nothing -> nothing {
 }
 
 # State of a saved session name against the session table:
-#   name is active  → "active"  (running)
-#   name is exited  → "exited"  (resurrectable via attach)
-#   name not listed → null      (saved name matches no Zellij session)
+#   name is active  → "active"   (running)
+#   name is exited  → "exited"   (resurrectable via attach)
+#   name not listed → "offline"  (saved name matches no Zellij session)
 #
 # Callers guard for "no session saved" (a null name) themselves before calling.
 export def session-state [
   saved: string    # A workspace's saved session name
   sessions: table  # Rows from `zellij-sessions`
-]: nothing -> oneof<string, nothing> {
+]: nothing -> string {
   let match = ($sessions | where name == $saved)
   if ($match | is-empty) { "offline" } else { $match | first | get state }
 }
 
 # Paint `text` by a session state: an active meta workbench is purple, an active
-# workspace is blue, a dormant saved session is red (both "exited" — still
-# resurrectable — and "offline" — the saved name is gone from Zellij entirely).
+# workspace is blue, a dormant saved session is red (both "exited", still
+# resurrectable, and "offline", the saved name is gone from Zellij entirely).
 # When there is no saved session at all (null state), `text` is returned as-is.
 export def paint-state [
   text: string                       # The string to color
@@ -399,7 +399,7 @@ def print-workspace-contents [name: string]: nothing -> nothing {
 #   no substring match   → fuzzy picker over ALL workspaces (fall back)
 #
 # Matching is case-insensitive; an exact name always wins outright. Returns the
-# chosen names — empty when the picker is cancelled or --confirm is declined.
+# chosen names; empty when the picker is cancelled or --confirm is declined.
 export def select-workspaces [
   query?: string                        # Name or partial; omit to pick from all
   --multi (-m)                          # Allow selecting several; off → single
@@ -468,7 +468,7 @@ export def select-workspaces [
   $selection
 }
 
-# Resolve which workspace a user-facing command should target — either via an
+# Resolve which workspace a user-facing command should target: either via an
 # interactive picker (--choose) or by inferring from $env.PWD.
 export def select-workspace [choose: bool]: nothing -> string {
   if $choose {

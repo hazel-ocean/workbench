@@ -19,4 +19,4 @@ export-env {
   )
 }
 
-export module nushell/workspace.nu
+export module nushell/workspace
