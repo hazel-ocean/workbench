@@ -110,6 +110,27 @@ export def --env attach [
   }
 }
 
+# cd into an existing workspace without attaching to Zellij
+#
+# Same matching and display as `workspace attach`, but does not attach to
+# the workspace's Zellij session (if one exists).
+#
+#   workspace cd ENG-123   # exact
+#   workspace cd sms       # substring; picks if more than one matches
+#   workspace cd           # pick interactively
+export def --env cd [
+  name?: string   # Workspace name or partial; omit to choose interactively
+]: nothing -> nothing {
+  let sel = (select-workspaces $name --prompt "cd to:" --color-state)
+  if ($sel | is-empty) {
+    print "Nothing selected."
+    return
+  }
+  let name = ($sel | first)
+  let dir = (workspace-dir $name)
+  cd $dir
+}
+
 # Rename a workspace's Zellij session, or reconcile a rename made in Zellij itself
 #
 # Thin top-level alias for `workspace zellij rename`; see there for details.
