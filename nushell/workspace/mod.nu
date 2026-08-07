@@ -86,7 +86,7 @@ export def --env new [
 #
 # The argument is matched case-insensitively: an exact name wins outright,
 # otherwise every workspace whose name contains the substring is a candidate.
-# More than one candidate — or omitting the name entirely — opens a picker;
+# More than one candidate, or omitting the name entirely, opens a picker;
 # a query that matches nothing falls back to a picker over all workspaces.
 #
 #   workspace attach ENG-123   # exact
@@ -128,7 +128,7 @@ export def --env rename [
 # substring resolves directly; anything ambiguous (or a no-match fall back to
 # all) opens a fuzzy multi-select. Unless --force is given, the selection's
 # contents are listed (including hidden files, flagging uncommitted work) and
-# confirmed first. This is irreversible — use `workspace trash` to keep the
+# confirmed first. This is irreversible; use `workspace trash` to keep the
 # directories recoverable.
 #
 #   workspace delete ENG-123          # exact
@@ -163,7 +163,7 @@ export def --env trash [
 #
 # Resolves targets via `select-workspaces` (which handles the picker, the
 # contents preview, and the confirmation when not forced), steps out of any
-# target the shell is sitting in, then removes each directory — via the system
+# target the shell is sitting in, then removes each directory, via the system
 # trash when `trash` is set.
 def --env remove-workspaces [
   force: bool           # Skip the confirmation prompt
