@@ -12,7 +12,7 @@ use $UTIL *
 # Press Enter to accept or type a replacement. Later runs reuse the saved name
 # silently. If Zellij rejects a name you're re-prompted. Use `workspace zellij
 # delete` to forget the saved name and optionally delete the session.
-export def attach [
+export def "zellij attach" [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
@@ -32,7 +32,7 @@ export def attach [
 #
 #   workspace zellij delete        # current workspace
 #   workspace zellij delete -c     # pick one
-export def delete [
+export def "zellij delete" [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
@@ -60,7 +60,7 @@ export def delete [
 #
 #   workspace zellij kill        # current workspace
 #   workspace zellij kill -c     # pick one
-export def kill [
+export def "zellij kill" [
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
@@ -90,7 +90,7 @@ export def kill [
 #   workspace rename my-new-name   # rename the live session
 #   workspace rename               # reconcile saved state + Ghostty title
 #   workspace rename -c            # reconcile a chosen workspace
-export def --env rename [
+export def --env "zellij rename" [
   new?: string              # New session name; omit to reconcile only
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {

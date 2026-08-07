@@ -18,9 +18,7 @@
 # resolves regardless of the caller's cwd.
 const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
-export module zellij { export use zellij.nu * }
-use zellij.nu rename
-alias zellij-rename-cmd = rename
+export use zellij.nu *
 
 # Print the absolute path of the workspaces root
 export def root []: nothing -> path {
@@ -119,7 +117,7 @@ export def --env rename [
   new?: string              # New session name; omit to reconcile only
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
-  zellij-rename-cmd $new --choose=$choose
+  zellij rename $new --choose=$choose
 }
 
 # Permanently delete workspaces and everything inside them
