@@ -13,15 +13,19 @@ use $UTIL *
 # silently. If Zellij rejects a name you're re-prompted. Use `workspace zellij
 # delete` to forget the saved name and optionally delete the session.
 export def "zellij attach" [
-  --choose (-c)             # Pick a workspace interactively instead of using the current one
+  --choose (-c)             # Pick a workspace or orphan session interactively
 ]: nothing -> nothing {
-  let name = (select-workspace $choose)
-  let dir = (workspace-dir $name)
-  let saved = (read-session-name $dir)
+  let target = (select-zellij-target $choose)
+  # Orphan session: no dir to launch from, and it already exists, so just attach.
+  if $target.dir == null {
+    zellij-attach-existing $target.session
+    return
+  }
+  let saved = (read-session-name $target.dir)
   if $saved != null {
-    zellij-attach $dir $saved
+    zellij-attach $target.dir $saved
   } else {
-    zellij-attach $dir $name --prompt
+    zellij-attach $target.dir $target.workspace --prompt
   }
 }
 
@@ -33,17 +37,18 @@ export def "zellij attach" [
 #   workspace zellij delete        # current workspace
 #   workspace zellij delete -c     # pick one
 export def "zellij delete" [
-  --choose (-c)             # Pick a workspace interactively instead of using the current one
+  --choose (-c)             # Pick a workspace or orphan session interactively
 ]: nothing -> nothing {
-  let name = (select-workspace $choose)
-  let dir = (workspace-dir $name)
-  let saved = (read-session-name $dir)
-  let session = ($saved | default $name)
-  remove-session-name $dir
-  if $saved != null { print $"(ansi yellow)forgot saved session '($saved)'(ansi reset)" }
+  let target = (select-zellij-target $choose)
+  let session = $target.session
+  # Orphans have no saved `.zellij_session` to forget; skip that bookkeeping.
+  if $target.dir != null {
+    let saved = (read-session-name $target.dir)
+    remove-session-name $target.dir
+    if $saved != null { print $"(ansi yellow)forgot saved session '($saved)'(ansi reset)" }
+  }
   if (zellij-session-exists $session) {
-    let answer = (["no" "yes"] | input list $"Delete Zellij session '($session)' entirely?")
-    if $answer == "yes" {
+    if (confirm-prompt $"Delete Zellij session '($session)' entirely?") {
       zellij-delete-session $session
       print $"(ansi red)deleted Zellij session '($session)'(ansi reset)"
     }
@@ -61,11 +66,10 @@ export def "zellij delete" [
 #   workspace zellij kill        # current workspace
 #   workspace zellij kill -c     # pick one
 export def "zellij kill" [
-  --choose (-c)             # Pick a workspace interactively instead of using the current one
+  --choose (-c)             # Pick a workspace or orphan session interactively
 ]: nothing -> nothing {
-  let name = (select-workspace $choose)
-  let dir = (workspace-dir $name)
-  let session = (read-session-name $dir | default $name)
+  let target = (select-zellij-target $choose)
+  let session = $target.session
   if (zellij-session-exists $session) {
     zellij-kill-session $session
     print $"(ansi yellow)killed Zellij session '($session)' \(resurrectable\)(ansi reset)"
@@ -103,9 +107,8 @@ export def --env "zellij rename" [
   # we're in, so only trust it when acting on the current workspace, not --choose.
   let current = (if $choose { null } else { zellij-current-session })
   if $current != null and $current != $saved {
-    let answer = (["no" "yes"] | input list
-      $"Saved session is '($saved)' but the live Zellij session is '($current)'. Update saved state to '($current)'?")
-    if $answer == "yes" {
+    if (confirm-prompt
+      $"Saved session is '($saved)' but the live Zellij session is '($current)'. Update saved state to '($current)'?") {
       save-session-name $dir $current
       sync-clawd-session-id $saved $current
       if (($env.ZELLIJ_SESSION_NAME? | default "") == $saved) {
@@ -141,9 +144,7 @@ export def --env "zellij rename" [
   # Offer to bring the Ghostty tab title in line with the session name.
   let title = (ghostty-title)
   if $title != null and $title != $saved {
-    let answer = (["no" "yes"] | input list
-      $"Ghostty title is '($title)'. Set it to '($saved)'?")
-    if $answer == "yes" {
+    if (confirm-prompt $"Ghostty title is '($title)'.(char newline)Set it to '($saved)'?") {
       ghostty-set-title $saved
       print $"(ansi green)set Ghostty title to '($saved)'(ansi reset)"
       $acted = true

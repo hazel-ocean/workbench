@@ -19,16 +19,15 @@ export def workspace-dir [name: string]: nothing -> path {
   }
 }
 
-# All workspace names: the meta home first, then immediate subdirs (excluding
-# "_"-prefixed), sorted.
+# All workspace names, case-insensitive alphabetical, with the meta home folded
+# in among the immediate subdirs (excluding "_"-prefixed) rather than pinned first.
 export def workspace-names []: nothing -> list<string> {
   let subdirs = (ls $env.WORKSPACES_ROOT
     | where type == dir
     | get name
     | each { $in | path basename }
-    | where {|n| not ($n | str starts-with "_") }
-    | sort)
-  [(workspace-home)] ++ $subdirs
+    | where {|n| not ($n | str starts-with "_") })
+  ([(workspace-home)] ++ $subdirs) | sort --ignore-case
 }
 
 # Width of the on-screen ruler guide in the session-name prompt. Zellij enforces
@@ -62,6 +61,16 @@ export def prompt-session-name [
   }
   print (ansi reset)  # clear color, and separate this attempt from the next
   $entered
+}
+
+# Yes/no confirmation defaulting to NO. Prints "<message> (y/N) > " and waits for
+# a single keypress: only 'y'/'Y' confirms; Enter, Esc, any other key, or the
+# timeout all decline. Modelled on the nix-config `system aliases` prompt.
+export def confirm-prompt [message: string]: nothing -> bool {
+  print --no-newline $"($message) \(y/N\) > "
+  let key = ((input listen --timeout 20sec --types [key]).code? | default "")
+  print $key  # echo the keypress, which `input listen` swallows
+  ($key | str lowercase) == "y"
 }
 
 # Saved Zellij session name for a workspace dir, or null if none/empty.
@@ -144,8 +153,9 @@ export def zellij-session-exists [name: string]: nothing -> bool {
   | any {|s| ($s | str trim) == $name }
 }
 
-# All Zellij sessions as {name, state} rows, where state is "active" for a
-# running session or "exited" for a resurrectable one. `--short` is avoided
+# All Zellij sessions as {name, state} rows sorted case-insensitively by name,
+# where state is "active" for a running session or "exited" for a resurrectable
+# one. `--short` is avoided
 # because it drops the EXITED marker we classify on. Best-effort: any failure
 # (or no sessions) yields []. Real session lines always carry a "[Created ...]"
 # stamp, which also filters out the "No active zellij sessions" notice.
@@ -163,6 +173,26 @@ export def zellij-sessions []: nothing -> table {
         state: (if ($line | str contains "EXITED") { "exited" } else { "active" })
       }
     }
+  | sort-by --ignore-case name
+}
+
+# Session names claimed by some workspace's saved `.zellij_session`. The set a
+# live session must fall outside of to count as an orphan.
+export def claimed-sessions []: nothing -> list<string> {
+  workspace-names
+  | each {|n| read-session-name (workspace-dir $n) }
+  | compact
+}
+
+# Live Zellij sessions owned by no workspace: started outside the workspace
+# tooling (other repos, ad-hoc). Rows are {name, state} as from `zellij-sessions`.
+# Pass --sessions to reuse an already-computed session table.
+export def orphan-sessions [
+  --sessions: table   # Precomputed `zellij-sessions`; omit to fetch fresh
+]: nothing -> table {
+  let all = ($sessions | default (zellij-sessions))
+  let claimed = (claimed-sessions)
+  $all | where name not-in $claimed
 }
 
 # The live name of the pane's own Zellij session, or null when not inside Zellij
@@ -285,6 +315,23 @@ export def zellij-attach [
   }
 }
 
+# Attach to (or switch to, when already nested) an existing Zellij session by
+# name. For orphan sessions owned by no workspace: there's no dir to launch from
+# and no `.zellij_session` to persist, so this skips the create/prompt/save path
+# of `zellij-attach`. Assumes the session already exists (active or exited).
+export def zellij-attach-existing [session: string]: nothing -> nothing {
+  if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
+    print $"Already in Zellij session '($session)'."
+    return
+  }
+  # Nested `attach` stalls; switch instead when already in a session.
+  if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
+    ^zellij action switch-session -- $session
+  } else {
+    ^zellij attach -- $session
+  }
+}
+
 # Infer the current workspace name from $env.PWD, or null if not inside one.
 #
 # A path under workspaces/<name>/… resolves to that workspace; anywhere else
@@ -335,14 +382,13 @@ export def repo-summary [repo: path]: nothing -> record {
   { name: ($repo | path basename), status: $status, branch: $branch }
 }
 
-# Names matching a query: an exact name wins outright, otherwise every name that
-# contains the substring (case-insensitive).
-def match-workspaces [query: string]: nothing -> list<string> {
-  let all = (workspace-names)
-  if $query in $all {
+# Names from `pool` matching a query: an exact name wins outright, otherwise
+# every name that contains the substring (case-insensitive).
+def match-workspaces [query: string, pool: list<string>]: nothing -> list<string> {
+  if $query in $pool {
     [$query]
   } else {
-    $all | where {|n| $n | str contains --ignore-case $query }
+    $pool | where {|n| $n | str contains --ignore-case $query }
   }
 }
 
@@ -400,22 +446,32 @@ def print-workspace-contents [name: string]: nothing -> nothing {
 #
 # Matching is case-insensitive; an exact name always wins outright. Returns the
 # chosen names; empty when the picker is cancelled or --confirm is declined.
+#
+# With --with-orphans the candidate pool also includes orphan Zellij sessions
+# (live sessions owned by no workspace); a returned name that isn't a workspace
+# is such a session. Only meaningful alongside --color-state, and incompatible
+# with --list-contents (which assumes every selection is a real workspace dir).
 export def select-workspaces [
   query?: string                        # Name or partial; omit to pick from all
   --multi (-m)                          # Allow selecting several; off → single
   --confirm                             # Require a yes/no gate after selection
   --list-contents                       # Print each selection's contents first
   --color-state                         # Color picker entries by their Zellij session state
+  --with-orphans                        # Also offer orphan Zellij sessions as candidates
   --prompt (-p): string = "Workspace:"  # Picker title + confirm/contents header
 ]: nothing -> list<string> {
-  let all = (workspace-names)
+  let ws_names = (workspace-names)
+  # Fetch the session table once when anything below needs it, not per entry.
+  let sessions = (if $color_state or $with_orphans { zellij-sessions } else { [] })
+  let orphans = (if $with_orphans { orphan-sessions --sessions $sessions } else { [] })
+  let all = (($ws_names ++ ($orphans | get name)) | sort --ignore-case)
   if ($all | is-empty) {
     error make { msg: "No workspaces found." }
   }
 
   # A non-null query resolves to its matches; empty matches (and a null query)
-  # fall back to every workspace. A lone match is taken directly, no picker.
-  let matches = if $query == null { $all } else { match-workspaces $query }
+  # fall back to every candidate. A lone match is taken directly, no picker.
+  let matches = if $query == null { $all } else { match-workspaces $query $all }
   let candidates = if ($matches | is-empty) { $all } else { $matches }
   let direct = ($query != null) and (($matches | length) == 1)
 
@@ -424,12 +480,16 @@ export def select-workspaces [
   } else if $color_state {
     # Show each entry colored by session state. `--display` colors the label but
     # `input list` still returns the original record, so we map back to names.
-    let sessions = (zellij-sessions)
     let home = (workspace-home)
     let items = ($candidates | each {|n|
-      let saved = (read-session-name (workspace-dir $n))
-      let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
-      { name: $n, label: (paint-state $n $state ($n == $home)) }
+      if $n in $ws_names {
+        let saved = (read-session-name (workspace-dir $n))
+        let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
+        { name: $n, label: (paint-state $n $state ($n == $home)) }
+      } else {
+        let state = ($orphans | where name == $n | get 0?.state)
+        { name: $n, label: $"(paint-state $n $state false) (ansi dark_gray)\(orphan\)(ansi reset)" }
+      }
     })
     let disp = {|it| $it.label }
     if $multi {
@@ -458,8 +518,7 @@ export def select-workspaces [
   }
 
   if $confirm {
-    let answer = (["no" "yes"] | input list "Confirm?")
-    if $answer != "yes" {
+    if not (confirm-prompt "Confirm?") {
       print "Aborted."
       return []
     }
@@ -483,5 +542,64 @@ export def select-workspace [choose: bool]: nothing -> string {
       error make { msg: "Not inside a workspace. Pass --choose or cd into one." }
     }
     $inferred
+  }
+}
+
+# Resolve which Zellij session a `workspace zellij` verb should act on.
+#
+# Without $choose: the current workspace (inferred from PWD) and its session, the
+# saved `.zellij_session` name or, failing that, the workspace name.
+#
+# With $choose: a picker over every workspace PLUS every orphan live session (one
+# owned by no workspace). Picking a workspace resolves as above; picking an
+# orphan targets that live session directly.
+#
+# Returns { session: string, dir: path|null, workspace: string|null }; `dir` and
+# `workspace` are null only for an orphan pick, signalling callers to skip any
+# `.zellij_session` bookkeeping.
+export def select-zellij-target [choose: bool]: nothing -> record {
+  if not $choose {
+    let name = (select-workspace false)
+    let dir = (workspace-dir $name)
+    return {
+      session: (read-session-name $dir | default $name)
+      dir: $dir
+      workspace: $name
+    }
+  }
+
+  let sessions = (zellij-sessions)
+  let home = (workspace-home)
+  let ws_items = (workspace-names | each {|n|
+    let saved = (read-session-name (workspace-dir $n))
+    let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
+    {
+      name: $n
+      session: ($saved | default $n)
+      dir: (workspace-dir $n)
+      workspace: $n
+      label: (paint-state $n $state ($n == $home))
+    }
+  })
+  let orphan_items = (orphan-sessions --sessions $sessions | each {|s|
+    {
+      name: $s.name
+      session: $s.name
+      dir: null
+      workspace: null
+      label: $"(paint-state $s.name $s.state false) (ansi dark_gray)\(orphan\)(ansi reset)"
+    }
+  })
+
+  let picked = ($ws_items ++ $orphan_items
+    | sort-by --ignore-case name
+    | input list --fuzzy --display {|it| $it.label } "Session:")
+  if $picked == null {
+    error make { msg: "Nothing selected." }
+  }
+  {
+    session: $picked.session
+    dir: $picked.dir
+    workspace: $picked.workspace
   }
 }
