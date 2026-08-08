@@ -29,19 +29,38 @@ export def root []: nothing -> path {
 #
 # The `state` column reports the saved Zellij session's status (active / exited
 # / gone), or is empty when no session is saved. See `session-state`.
+#
+# Orphan Zellij sessions, live sessions owned by no workspace, are mixed in as
+# rows with a null `workspace` and no repos, so `list` surfaces every session,
+# not just workspace-associated ones. See `orphan-sessions`.
+#
+# Rows sort case-insensitively by their identifying name: a workspace by its
+# name, an orphan by its session name. The `key` column is internal, dropped
+# before returning.
 export def list []: nothing -> table {
   let sessions = (zellij-sessions)
   let home = (workspace-home)
-  workspace-names | each {|name|
+  let rows = (workspace-names | each {|name|
     let saved = (read-session-name (workspace-dir $name))
     let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
     {
+      key: $name
       workspace: $name
       session: (if ($saved | is-not-empty) { paint-state $saved $state ($name == $home) })
       state: $state
       repos: (workspace-repos $name | each {|r| repo-summary $r })
     }
-  }
+  })
+  let orphans = (orphan-sessions --sessions $sessions | each {|s|
+    {
+      key: $s.name
+      workspace: $"(ansi dark_gray)\(orphan\)(ansi reset)"
+      session: (paint-state $s.name $s.state false)
+      state: $s.state
+      repos: []
+    }
+  })
+  $rows ++ $orphans | sort-by --ignore-case key | reject key
 }
 
 # Summarize a workspace: name, path, saved Zellij session, and repos
@@ -93,15 +112,24 @@ export def --env new [
 #
 # If the workspace has a saved Zellij session (see `workspace zellij attach`),
 # you're attached to it after attaching.
+#
+# The picker also offers orphan Zellij sessions (live sessions owned by no
+# workspace). Picking one attaches to it in place, with no cd, since an orphan
+# has no workspace directory to enter.
 export def --env attach [
   name?: string   # Workspace name or partial; omit to choose interactively
 ]: nothing -> nothing {
-  let sel = (select-workspaces $name --prompt "Attach to:" --color-state)
+  let sel = (select-workspaces $name --prompt "Attach to:" --color-state --with-orphans)
   if ($sel | is-empty) {
     print "Nothing selected."
     return
   }
   let name = ($sel | first)
+  # An orphan session isn't a workspace: attach to it without cd'ing anywhere.
+  if $name not-in (workspace-names) {
+    zellij-attach-existing $name
+    return
+  }
   let dir = (workspace-dir $name)
   cd $dir
   let saved = (read-session-name $dir)
