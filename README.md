@@ -12,7 +12,8 @@ Requires [`mise`](https://mise.jdx.dev) and [`gh`](https://cli.github.com);
 ## Getting started
 
 ```sh
-mise run shell    # Nushell with the overlay loaded
+cp .env.example .env    # then set your default GitHub org
+mise run shell          # Nushell with the overlay loaded
 ```
 
 Or load by hand:
@@ -52,7 +53,29 @@ Pass `--choose` (`-c`) to pick a different one from a list instead.
 
 ## Configuration
 
-|Env var            |Default              |Purpose                                |
-|-------------------|---------------------|---------------------------------------|
-|`WORKSPACES_ROOT`  |`./workspaces/`      |Where workspaces live (set by `mod.nu`)|
-|`WORKSPACES_GH_ORG`|`.github/default-org`|Org prepended to bare repo names       |
+|Env var                         |Default        |Purpose                         |
+|--------------------------------|---------------|--------------------------------|
+|`WORKSPACES_ROOT`     |`./workspaces/`|Where workspaces live           |
+|`WORKSPACES_GH_ORG`  |unset          |Org prepended to bare repo names|
+
+Loading the overlay sources `.env` from the repo root, which is untracked and
+machine-local. Copy the example and edit it (`cp .env.example .env`) so bare
+repo names resolve, or always qualify repos as `<org>/<repo>`. Variables already
+set in your environment take precedence over `.env`.
+
+Clones are shallow and blobless: the last 90 days of history, and file contents
+only for what's checked out. Blobs that exist solely in history (an accidentally
+committed snapshot, say) are never downloaded; anything the working tree needs
+is. Reading historical file contents lazily fetches over the network, so `git
+log -p` and `git blame` on old revisions need connectivity.
+
+Pass `--full` to `workspace clone` or `workspace new` for a complete clone. To
+promote an existing one in place, drop both config keys before refetching;
+unsetting the filter alone leaves the remote marked as a promisor and objects
+still missing:
+
+```nu
+git config --unset remote.origin.partialclonefilter
+git config --unset remote.origin.promisor
+git fetch --refetch --unshallow
+```
