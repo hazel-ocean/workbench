@@ -3,7 +3,7 @@
 Nushell commands for per-task workspaces — one dir per Linear ticket, with the
 repos you need cloned inside, and pipelines to run commands across all of them.
 
-A *workspace* is a subdirectory of `$env.WORKSPACES_ROOT` (defaults to
+A *workspace* is a subdirectory of `$env.WORKBENCH_WORKSPACES_ROOT` (defaults to
 `./workspaces/`); a *repo* is a `.git`-containing subdirectory of a workspace.
 
 Requires [`mise`](https://mise.jdx.dev) and [`gh`](https://cli.github.com);
@@ -53,10 +53,10 @@ Pass `--choose` (`-c`) to pick a different one from a list instead.
 
 ## Configuration
 
-|Env var                         |Default        |Purpose                         |
-|--------------------------------|---------------|--------------------------------|
-|`WORKSPACES_ROOT`     |`./workspaces/`|Where workspaces live           |
-|`WORKSPACES_GH_ORG`  |unset          |Org prepended to bare repo names|
+|Env var                        |Default        |Purpose                         |
+|-------------------------------|---------------|--------------------------------|
+|`WORKBENCH_WORKSPACES_ROOT`    |`./workspaces/`|Where workspaces live           |
+|`WORKBENCH_DEFAULT_GITHUB_ORG` |unset          |Org prepended to bare repo names|
 
 Loading the overlay sources `.env` from the repo root, which is untracked and
 machine-local. Copy the example and edit it (`cp .env.example .env`) so bare

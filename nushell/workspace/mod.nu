@@ -22,7 +22,7 @@ export use zellij.nu *
 
 # Print the absolute path of the workspaces root
 export def root []: nothing -> path {
-  $env.WORKSPACES_ROOT
+  $env.WORKBENCH_WORKSPACES_ROOT
 }
 
 # List all workspaces (meta home first) with each repo's branch and status
@@ -87,7 +87,7 @@ export def --env new [
   ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>]
   --full             # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
-  let dir = ($env.WORKSPACES_ROOT | path join $name)
+  let dir = ($env.WORKBENCH_WORKSPACES_ROOT | path join $name)
   if ($dir | path exists) {
     print $"(ansi yellow)workspace ($name) already exists(ansi reset)"
   } else {
@@ -236,7 +236,7 @@ def --env remove-workspaces [
   let removed = ($targets | where {|t| $t != (workspace-home)})
   let current = (try-infer-workspace)
   if $current != null and ($current in $removed) {
-    cd $env.WORKSPACES_ROOT
+    cd $env.WORKBENCH_WORKSPACES_ROOT
   }
 
   for name in $targets {
@@ -273,7 +273,7 @@ def --env remove-workspaces [
 
 # Parse a repo spec into a clone slug and an optional ref to check out.
 #
-# Accepted forms (org defaults to $env.WORKSPACES_GH_ORG when omitted):
+# Accepted forms (org defaults to $env.WORKBENCH_DEFAULT_GITHUB_ORG when omitted):
 #   <repo>                 <org>/<repo>
 #   <repo>@<ref>           <org>/<repo>@<ref>    ref = tag or branch
 #   <repo>#<pr>            <org>/<repo>#<pr>     pr  = PR number
@@ -290,10 +290,10 @@ def parse-repo-spec [spec: string]: nothing -> record {
   let slug = if ($name | str contains "/") {
     $name
   } else {
-    let org = $env.WORKSPACES_GH_ORG?
+    let org = $env.WORKBENCH_DEFAULT_GITHUB_ORG?
     if ($org | is-empty) {
       error make {
-        msg: $"No default org for bare repo '($name)'. Set WORKSPACES_GH_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
+        msg: $"No default org for bare repo '($name)'. Set WORKBENCH_DEFAULT_GITHUB_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
       }
     }
     $"($org)/($name)"
@@ -348,7 +348,7 @@ def clone-repo [slug: string, target: path, full: bool]: nothing -> nothing {
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
 # Each repo is `[<org>/]<repo>[<ref>]`. A bare name is resolved against
-# $env.WORKSPACES_GH_ORG; prefix `owner/` to override the org. An optional
+# $env.WORKBENCH_DEFAULT_GITHUB_ORG; prefix `owner/` to override the org. An optional
 # trailing ref checks out after cloning: `@<tag-or-branch>` or `#<pr-number>`.
 #
 # Clones are shallow and blobless by default: the last 90 days of history, and
