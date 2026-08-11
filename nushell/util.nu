@@ -7,15 +7,15 @@
 
 # The meta workspace's name: the workbench repo root's basename.
 export def workspace-home []: nothing -> string {
-  $env.WORKSPACES_ROOT | path dirname | path basename
+  $env.WORKBENCH_WORKSPACES_ROOT | path dirname | path basename
 }
 
 # Absolute dir for a workspace name; the meta home maps to the repo root.
 export def workspace-dir [name: string]: nothing -> path {
   if $name == (workspace-home) {
-    $env.WORKSPACES_ROOT | path dirname
+    $env.WORKBENCH_WORKSPACES_ROOT | path dirname
   } else {
-    $env.WORKSPACES_ROOT | path join $name
+    $env.WORKBENCH_WORKSPACES_ROOT | path join $name
   }
 }
 
@@ -25,8 +25,8 @@ export def workspace-dir [name: string]: nothing -> path {
 # Git can't track the empty workspaces root, so a fresh clone has none until the
 # first `workspace new`; a missing root means no workspaces, not an error.
 export def workspace-names []: nothing -> list<string> {
-  let subdirs = if ($env.WORKSPACES_ROOT | path exists) {
-    ls $env.WORKSPACES_ROOT
+  let subdirs = if ($env.WORKBENCH_WORKSPACES_ROOT | path exists) {
+    ls $env.WORKBENCH_WORKSPACES_ROOT
     | where type == dir
     | get name
     | each { $in | path basename }
@@ -345,7 +345,7 @@ export def zellij-attach-existing [session: string]: nothing -> nothing {
 # inside the workbench repo (including the root and workspaces/ itself) resolves
 # to the meta home workspace.
 export def try-infer-workspace []: nothing -> oneof<string, nothing> {
-  let ws_root = ($env.WORKSPACES_ROOT | path expand)
+  let ws_root = ($env.WORKBENCH_WORKSPACES_ROOT | path expand)
   let home_dir = ($ws_root | path dirname)
   let pwd = ($env.PWD | path expand)
   if ($pwd != $ws_root) and ($pwd | str starts-with ($ws_root | path join "")) {
