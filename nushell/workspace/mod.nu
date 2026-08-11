@@ -85,6 +85,7 @@ export def info [
 export def --env new [
   name: string       # Workspace directory name
   ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>]
+  --full             # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
   let dir = ($env.WORKSPACES_ROOT | path join $name)
   if ($dir | path exists) {
@@ -95,7 +96,7 @@ export def --env new [
   }
   cd $dir
   if not ($repos | is-empty) {
-    clone ...$repos
+    clone ...$repos --full=$full
   }
 }
 
@@ -289,7 +290,13 @@ def parse-repo-spec [spec: string]: nothing -> record {
   let slug = if ($name | str contains "/") {
     $name
   } else {
-    $"($env.WORKSPACES_GH_ORG)/($name)"
+    let org = $env.WORKSPACES_GH_ORG?
+    if ($org | is-empty) {
+      error make {
+        msg: $"No default org for bare repo '($name)'. Set WORKSPACES_GH_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
+      }
+    }
+    $"($org)/($name)"
   }
   { slug: $slug, ref: $ref }
 }
@@ -308,20 +315,55 @@ def checkout-ref [repo: path, ref: string]: nothing -> nothing {
   }
 }
 
+const CLONE_HISTORY_WINDOW = 90day
+
+# Clone one repo, truncating history to the last $CLONE_HISTORY_WINDOW.
+#
+# `--filter=blob:none` skips file contents that only exist in history, so a
+# large blob committed and later reverted is never downloaded. Blobs the
+# checkout needs still come down during the clone, and anything else is fetched
+# on demand, so reading old file contents offline is the one thing that breaks.
+#
+# `--no-single-branch` keeps every branch tip fetched so a later `@<ref>` or
+# `#<pr>` checkout resolves. `--shallow-since` is a hard error when the remote
+# has no commits in the window, so fall back to full history in that case.
+def clone-repo [slug: string, target: path, full: bool]: nothing -> nothing {
+  if $full {
+    ^gh repo clone $slug $target
+    return
+  }
+  let since = ((date now) - $CLONE_HISTORY_WINDOW | format date "%Y-%m-%d")
+  try {
+    (^gh repo clone $slug $target --
+      $"--shallow-since=($since)"
+      --no-single-branch
+      --filter=blob:none)
+  } catch {
+    if ($target | path exists) { rm -rf $target }
+    print $"(ansi yellow)no history since ($since); cloning full history(ansi reset)"
+    ^gh repo clone $slug $target -- --filter=blob:none
+  }
+}
+
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
 # Each repo is `[<org>/]<repo>[<ref>]`. A bare name is resolved against
 # $env.WORKSPACES_GH_ORG; prefix `owner/` to override the org. An optional
 # trailing ref checks out after cloning: `@<tag-or-branch>` or `#<pr-number>`.
 #
+# Clones are shallow and blobless by default: the last 90 days of history, and
+# file contents only for what's checked out. Pass --full for a complete clone.
+#
 #   workspace clone web-app
-#   workspace clone OneSignal/web-app
+#   workspace clone other-org/web-app
 #   workspace clone web-app@v1.2.3        # tag or branch
 #   workspace clone web-app#1234          # PR number
-#   workspace clone OneSignal/web-app@my-branch
+#   workspace clone other-org/web-app@my-branch
+#   workspace clone web-app --full        # complete history
 export def clone [
   ...repos: string  # Repos to clone: [<org>/]<repo>[@<tag|branch> | #<pr>]
   --choose (-c)     # Pick a target workspace interactively instead of using the current one
+  --full            # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   if $name == (workspace-home) {
@@ -346,7 +388,7 @@ export def clone [
     }
     let suffix = if $parsed.ref != null { $" ($parsed.ref)" } else { "" }
     print $"(ansi green)clone ($slug)($suffix)(ansi reset)"
-    ^gh repo clone $slug $target
+    clone-repo $slug $target $full
     if $parsed.ref != null {
       checkout-ref $target $parsed.ref
     }
@@ -354,6 +396,10 @@ export def clone [
 }
 
 # Run `git diff --color=always ...args` inside each repo of a workspace
+#
+# Returns a `repo`/`diff` table; `in-each`'s generic `result` column is renamed
+# so `| get diff` reads naturally. Built by hand rather than with `rename`, which
+# this module shadows with its own `rename` command.
 #
 # The def is `--wrapped`, so any unrecognized flags, revisions, and paths pass
 # straight through to `git diff` (only --choose/--parallel are consumed here):
@@ -367,7 +413,8 @@ export def --wrapped diff [
 ]: nothing -> table {
   # `--wrapped` forwards --help into $args, so handle it ourselves.
   if ("--help" in $args) or ("-h" in $args) { print (help workspace diff); return }
-  in-each --choose=$choose --parallel=$parallel {|| ^git diff --color=always ...$args }
+  (in-each --choose=$choose --parallel=$parallel {|| ^git diff --color=always ...$args }
+    | each {|row| { repo: $row.repo, diff: $row.result } })
 }
 
 # Run a closure inside each repo of a workspace

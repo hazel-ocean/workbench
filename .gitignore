@@ -1,3 +1,4 @@
 workspaces/*
 !workspaces/.keep
 .zellij_session
+.env

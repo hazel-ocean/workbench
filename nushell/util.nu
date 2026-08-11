@@ -21,12 +21,19 @@ export def workspace-dir [name: string]: nothing -> path {
 
 # All workspace names, case-insensitive alphabetical, with the meta home folded
 # in among the immediate subdirs (excluding "_"-prefixed) rather than pinned first.
+#
+# Git can't track the empty workspaces root, so a fresh clone has none until the
+# first `workspace new`; a missing root means no workspaces, not an error.
 export def workspace-names []: nothing -> list<string> {
-  let subdirs = (ls $env.WORKSPACES_ROOT
+  let subdirs = if ($env.WORKSPACES_ROOT | path exists) {
+    ls $env.WORKSPACES_ROOT
     | where type == dir
     | get name
     | each { $in | path basename }
-    | where {|n| not ($n | str starts-with "_") })
+    | where {|n| not ($n | str starts-with "_") }
+  } else {
+    []
+  }
   ([(workspace-home)] ++ $subdirs) | sort --ignore-case
 }
 

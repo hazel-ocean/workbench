@@ -5,6 +5,22 @@
 const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
 
+# Attach to (or create) this workspace's Zellij session
+#
+# Shorthand for `workspace zellij attach`. When the shell is already inside a
+# Zellij session there's nothing to attach to, so it just reports the session;
+# pass --choose to pick a different workspace or orphan session anyway.
+export def main [
+  --choose (-c)             # Pick a workspace or orphan session interactively
+]: nothing -> nothing {
+  let current = ($env.ZELLIJ_SESSION_NAME? | default "")
+  if ($current | is-not-empty) and (not $choose) {
+    print $"Already in Zellij session '($current)'."
+    return
+  }
+  zellij attach --choose=$choose
+}
+
 # Attach to (or create) a Zellij session for a workspace
 #
 # The session name is remembered in `.zellij_session` at the workspace root. The
