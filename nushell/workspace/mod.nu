@@ -40,7 +40,7 @@ export def root []: nothing -> path {
 export def list []: nothing -> table {
   let sessions = (zellij-sessions)
   let home = (workspace-home)
-  let rows = (workspace-names | each {|name|
+  let rows = (workspace-names | par-each {|name|
     let saved = (read-session-name (workspace-dir $name))
     let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
     {
@@ -48,7 +48,7 @@ export def list []: nothing -> table {
       workspace: $name
       session: (if ($saved | is-not-empty) { paint-state $saved $state ($name == $home) })
       state: $state
-      repos: (workspace-repos $name | each {|r| repo-summary $r })
+      repos: (repo-summaries $name)
     }
   })
   let orphans = (orphan-sessions --sessions $sessions | each {|s|
@@ -77,7 +77,7 @@ export def info [
     path: $dir
     session: $saved
     state: (if ($saved | is-not-empty) { session-state $saved (zellij-sessions) })
-    repos: (workspace-repos $name | each {|r| repo-summary $r })
+    repos: (repo-summaries $name)
   }
 }
 

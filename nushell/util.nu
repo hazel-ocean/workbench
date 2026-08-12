@@ -389,6 +389,10 @@ export def repo-summary [repo: path]: nothing -> record {
   { name: ($repo | path basename), status: $status, branch: $branch }
 }
 
+export def repo-summaries [name: string]: nothing -> table {
+  workspace-repos $name | par-each --keep-order {|r| repo-summary $r }
+}
+
 # Names from `pool` matching a query: an exact name wins outright, otherwise
 # every name that contains the substring (case-insensitive).
 def match-workspaces [query: string, pool: list<string>]: nothing -> list<string> {
@@ -413,7 +417,7 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     }
     return
   }
-  let repos = (workspace-repos $name | each {|r| repo-summary $r })
+  let repos = (repo-summaries $name)
   let dirty = ($repos | where status == "dirty" | length)
   let note = if $dirty > 0 {
     $" (ansi red)[($dirty) dirty repo\(s\)](ansi reset)"
