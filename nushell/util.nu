@@ -375,7 +375,23 @@ export def workspace-repos [name: string]: nothing -> list<path> {
   }
 }
 
-# Branch + porcelain status for a single repo path.
+# Commits on HEAD that the upstream branch lacks, and the reverse. A branch can
+# be both at once, so they are separate counts, not one signed number.
+#
+# Both are null when there is no upstream: never pushed, or a detached HEAD.
+def upstream-divergence [repo: path]: nothing -> record {
+  let counts = (^git -C $repo rev-list --count --left-right "@{upstream}...HEAD" | complete)
+  if $counts.exit_code != 0 {
+    return { ahead: null, behind: null }
+  }
+  let pair = ($counts.stdout | str trim | split row --regex '\s+')
+  { ahead: ($pair | get 1 | into int), behind: ($pair | get 0 | into int) }
+}
+
+# Branch, working-tree state, and upstream divergence for a single repo path.
+#
+# `status` is the working-tree state: `clean` or `dirty`. Detachment shows up in
+# `branch`, so a detached HEAD still reports whether it is dirty.
 export def repo-summary [repo: path]: nothing -> record {
   let current = (^git -C $repo branch --show-current | str trim)
   let branch = if ($current | is-empty) {
@@ -385,8 +401,12 @@ export def repo-summary [repo: path]: nothing -> record {
     $current
   }
   let porcelain = (^git -C $repo status --porcelain)
-  let status = if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" }
-  { name: ($repo | path basename), status: $status, branch: $branch }
+  {
+    name: ($repo | path basename)
+    branch: $branch
+    status: (if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" })
+    ...(upstream-divergence $repo)
+  }
 }
 
 export def repo-summaries [name: string]: nothing -> table {
@@ -418,12 +438,18 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     return
   }
   let repos = (repo-summaries $name)
+  # Unpushed commits die with the workspace just as uncommitted changes do, so
+  # both are flagged before a delete or trash.
   let dirty = ($repos | where status == "dirty" | length)
-  let note = if $dirty > 0 {
-    $" (ansi red)[($dirty) dirty repo\(s\)](ansi reset)"
-  } else {
+  let unpushed = ($repos | where ($it.ahead | default 0) > 0 | length)
+  let note = ([
+    (if $dirty > 0 { $"($dirty) dirty repo\(s\)" })
+    (if $unpushed > 0 { $"($unpushed) repo\(s\) with unpushed commits" })
+  ] | compact | if ($in | is-empty) {
     ""
-  }
+  } else {
+    $" (ansi red)[($in | str join '; ')](ansi reset)"
+  })
   print $"  (ansi cyan)($name)(ansi reset)($note)"
   let saved = (read-session-name $dir)
   if $saved != null {
@@ -438,7 +464,8 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     let base = ($entry.name | path basename)
     let repo = ($repos | where name == $base | get 0?)
     let detail = if $repo != null {
-      $" (ansi dark_gray)[($repo.branch), ($repo.status)](ansi reset)"
+      let ahead = (if ($repo.ahead | default 0) > 0 { $", ahead ($repo.ahead)" } else { "" })
+      $" (ansi dark_gray)[($repo.branch), ($repo.status)($ahead)](ansi reset)"
     } else {
       ""
     }
