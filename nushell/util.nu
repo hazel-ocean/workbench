@@ -388,7 +388,22 @@ def upstream-divergence [repo: path]: nothing -> record {
   { ahead: ($pair | get 1 | into int), behind: ($pair | get 0 | into int) }
 }
 
-# Branch, working-tree state, and upstream divergence for a single repo path.
+# The PR for a repo's current branch, as a clickable `#<number>`, or null when
+# there is no PR. Skipped without an upstream: an unpushed branch cannot have
+# one, and `gh` costs a network round trip per repo.
+def pr-link [repo: path, upstream: bool]: nothing -> any {
+  if not $upstream {
+    return null
+  }
+  let out = (do { cd $repo; ^gh pr view --json number,url } | complete)
+  if $out.exit_code != 0 {
+    return null
+  }
+  let pr = ($out.stdout | from json)
+  $pr.url | ansi link --text $"(ansi blue)#($pr.number)(ansi reset)"
+}
+
+# Branch, working-tree state, upstream divergence, and PR for a single repo path.
 #
 # `status` is the working-tree state: `clean` or `dirty`. Detachment shows up in
 # `branch`, so a detached HEAD still reports whether it is dirty.
@@ -401,11 +416,13 @@ export def repo-summary [repo: path]: nothing -> record {
     $current
   }
   let porcelain = (^git -C $repo status --porcelain)
+  let divergence = (upstream-divergence $repo)
   {
     name: ($repo | path basename)
     branch: $branch
     status: (if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" })
-    ...(upstream-divergence $repo)
+    ...$divergence
+    pr: (pr-link $repo ($divergence.ahead != null))
   }
 }
 
