@@ -436,6 +436,7 @@ export def clone [
       help: "Usage: workspace clone [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]..."
     }
   }
+  assert-tool "gh" "clone a repo"
   for repo in $repos {
     let parsed = (parse-repo-spec $repo)
     let slug = $parsed.slug

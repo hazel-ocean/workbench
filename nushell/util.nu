@@ -37,6 +37,26 @@ export def workspace-names []: nothing -> list<string> {
   ([(workspace-home)] ++ $subdirs) | sort --ignore-case
 }
 
+# True when an external tool is on PATH.
+#
+# `complete` traps a non-zero exit but not a missing binary: nushell raises
+# before the pipeline runs, so every call that shells out to zellij or gh has to
+# ask this first.
+export def tool-installed [tool: string]: nothing -> bool {
+  which $tool | is-not-empty
+}
+
+# Stop with a named error when a tool the command cannot work without is missing.
+export def assert-tool [tool: string, purpose: string]: nothing -> nothing {
+  if not (tool-installed $tool) {
+    error make --unspanned {
+      msg: $"'($tool)' is not installed."
+      code: "workspace::missing_tool"
+      help: $"Install ($tool) to ($purpose)."
+    }
+  }
+}
+
 # Width of the on-screen ruler guide in the session-name prompt. Zellij enforces
 # its own session-name rules; this only sizes the visual guide, never validates.
 const ZELLIJ_RULER_WIDTH = 24
@@ -124,6 +144,7 @@ export def sync-clawd-session-id [old: string, new: string]: nothing -> nothing 
 
 # Kill a running Zellij session, leaving it resurrectable. Best-effort.
 export def zellij-kill-session [name: string]: nothing -> nothing {
+  if not (tool-installed "zellij") { return }
   let result = (^zellij kill-session -- $name | complete)
   if $result.exit_code != 0 {
     print $"(ansi yellow)could not kill Zellij session '($name)': ($result.stderr | str trim)(ansi reset)"
@@ -133,6 +154,7 @@ export def zellij-kill-session [name: string]: nothing -> nothing {
 # Delete a Zellij session entirely: kill it if running, then drop its
 # resurrectable state. Best-effort.
 export def zellij-delete-session [name: string]: nothing -> nothing {
+  if not (tool-installed "zellij") { return }
   let result = (^zellij delete-session --force -- $name | complete)
   if $result.exit_code != 0 {
     print $"(ansi yellow)could not delete Zellij session '($name)': ($result.stderr | str trim)(ansi reset)"
@@ -143,6 +165,7 @@ export def zellij-delete-session [name: string]: nothing -> nothing {
 # while the session's server is running (an EXITED/resurrectable session has no
 # server to act on), so callers should not persist the new name on a false.
 export def zellij-rename-session [from: string, to: string]: nothing -> bool {
+  if not (tool-installed "zellij") { return false }
   let result = (^zellij --session $from action rename-session -- $to | complete)
   if $result.exit_code != 0 {
     print $"(ansi yellow)could not rename Zellij session '($from)' -> '($to)': ($result.stderr | str trim)(ansi reset)"
@@ -153,6 +176,7 @@ export def zellij-rename-session [from: string, to: string]: nothing -> bool {
 
 # True if a Zellij session with this exact name currently exists.
 export def zellij-session-exists [name: string]: nothing -> bool {
+  if not (tool-installed "zellij") { return false }
   ^zellij list-sessions --no-formatting --short
   | complete
   | get stdout
@@ -167,6 +191,7 @@ export def zellij-session-exists [name: string]: nothing -> bool {
 # (or no sessions) yields []. Real session lines always carry a "[Created ...]"
 # stamp, which also filters out the "No active zellij sessions" notice.
 export def zellij-sessions []: nothing -> table {
+  if not (tool-installed "zellij") { return [] }
   let result = (^zellij list-sessions --no-formatting | complete)
   if $result.exit_code != 0 { return [] }
   $result.stdout
@@ -208,6 +233,7 @@ export def orphan-sessions [
 # $env.ZELLIJ_SESSION_NAME goes stale (captured at pane spawn). Split on
 # " [Created" rather than " " so multi-word session names survive.
 export def zellij-current-session []: nothing -> oneof<string, nothing> {
+  if not (tool-installed "zellij") { return null }
   let result = (^zellij list-sessions --no-formatting | complete)
   if $result.exit_code != 0 { return null }
   let line = ($result.stdout | lines | where {|l| $l | str contains "(current)" } | get 0?)
@@ -291,6 +317,7 @@ export def zellij-attach [
   session: string  # Session name (a saved name, or the workspace name on a first run)
   --prompt         # Prompt for a name before the first attempt, prefilled with `session`
 ]: nothing -> nothing {
+  assert-tool "zellij" "attach to a session"
   cd $dir
   mut session = $session
   if $prompt {
@@ -327,6 +354,7 @@ export def zellij-attach [
 # and no `.zellij_session` to persist, so this skips the create/prompt/save path
 # of `zellij-attach`. Assumes the session already exists (active or exited).
 export def zellij-attach-existing [session: string]: nothing -> nothing {
+  assert-tool "zellij" "attach to a session"
   if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
     print $"Already in Zellij session '($session)'."
     return
@@ -457,6 +485,7 @@ export def default-branch [repo: path]: nothing -> oneof<string, nothing> {
   if $head.exit_code == 0 {
     return ($head.stdout | str trim | str replace --regex '^origin/' '')
   }
+  if not (tool-installed "gh") { return null }
   let out = (do { cd $repo; ^gh repo view --json defaultBranchRef } | complete)
   if $out.exit_code != 0 { return null }
   $out.stdout | from json | get defaultBranchRef.name
@@ -477,6 +506,7 @@ const PR_LIST_LIMIT = 100
 # $PR_LIST_LIMIT in a busy repo, and silently dropping the edge you need is
 # worse than missing someone else's PR. `pr-for-branch` covers the remainder.
 export def repo-prs [repo: path]: nothing -> table {
+  if not (tool-installed "gh") { return [] }
   let out = (do {
     cd $repo
     ^gh pr list --author @me --json number,headRefName,baseRefName,url --limit $PR_LIST_LIMIT
@@ -488,6 +518,7 @@ export def repo-prs [repo: path]: nothing -> table {
 # The open PR whose head is `branch`, or null. One network call, so callers
 # reach for it only when the bulk `repo-prs` table has no row for the branch.
 export def pr-for-branch [repo: path, branch: string]: nothing -> oneof<record, nothing> {
+  if not (tool-installed "gh") { return null }
   let out = (do {
     cd $repo
     ^gh pr list --head $branch --json number,headRefName,baseRefName,url --limit 1
@@ -605,7 +636,7 @@ def upstream-divergence [repo: path]: nothing -> record {
 # there is no PR. Skipped without an upstream: an unpushed branch cannot have
 # one, and `gh` costs a network round trip per repo.
 def pr-link [repo: path, upstream: bool]: nothing -> any {
-  if not $upstream {
+  if (not $upstream) or (not (tool-installed "gh")) {
     return null
   }
   let out = (do { cd $repo; ^gh pr view --json number,url } | complete)
