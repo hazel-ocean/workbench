@@ -141,13 +141,24 @@ Skip a repo whose branch already exists, and say so.
 
 ## `branch base`
 
-- `workspace branch base` prints the recorded base and sha per repo.
-- `workspace branch base <ref>` sets them for the current branch, seeding
-  `workbenchBaseSha` from `git rev-parse <ref>`.
+- `workspace branch base` reports what `sync` would rebase onto, per repo, with
+  the `source` that resolved it. Reporting the resolution rather than only the
+  record makes the command answer the question that matters before a sync.
+- `workspace branch base <ref>` records it for the current branch, seeding
+  `workbenchBaseSha` from `git rev-parse <ref>`. The ref must exist locally: a
+  base that cannot be checked out cannot be rebased onto, and `resolve-base`
+  ignores a record naming a branch that is not there.
 - `workspace branch base --repair` rebuilds records from `gh pr list`. The head
   and base pairs of the open PRs are the chain's edges, so the topology comes
   back. `workbenchBaseSha` is not recorded anywhere on GitHub, so it seeds from
   `git merge-base <branch> <base>`, which is correct until a parent is rebased.
+  A record already naming a live local branch is kept, not overwritten: its sha
+  survived rebases the merge base cannot see.
+- `--repo <name>` scopes any mode to one repo. Without it, `base <ref>` writes
+  to every repo in the workspace, which flattens the record of the one repo
+  that is stacked. That is the exact failure this whole command exists to
+  prevent, so replacing a different recorded base reports `replaced` and names
+  the old value.
 
 ## `branch status`
 
@@ -190,6 +201,21 @@ slots in beside the other two keys with no restructuring.
   needs one `gh pr view` per PR for counts. Settled in phase 5.
 
 ## Done
+
+Phase 2, in `nushell/workspace/branch.nu`, wired in through `export use
+branch.nu *`:
+
+`branch base` in all three modes, with `--choose`, `--repo`, and `--repair`.
+No `main` yet, so `workspace branch` alone is not a command until `status`
+lands in phase 5.
+
+Tested through the real overlay against a two-repo fixture workspace with a
+stubbed `gh` on PATH, covering: resolution from each source, repair seeding a
+two-link stack, repair being idempotent, `--repo` scoping, replacement
+reporting, a self-referential base, a base that exists only on origin, a
+missing base, a detached HEAD, and passing both a ref and `--repair`. Report
+mode also ran against the live `pumping-protections-max-usage` workspace, where
+`tech-specs` resolved through its open PR.
 
 Phase 1, in `nushell/util.nu`:
 

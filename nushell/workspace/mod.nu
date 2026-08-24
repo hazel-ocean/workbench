@@ -19,6 +19,7 @@
 const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
 export use zellij.nu *
+export use branch.nu *
 
 # Print the absolute path of the workspaces root
 export def root []: nothing -> path {
