@@ -85,7 +85,7 @@ export def info [
 # Create a new workspace and cd into it, optionally cloning repos
 export def --env new [
   name: string       # Workspace directory name
-  ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>]
+  ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]
   --full             # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
   let dir = ($env.WORKBENCH_WORKSPACES_ROOT | path join $name)
@@ -272,22 +272,31 @@ def --env remove-workspaces [
   }
 }
 
-# Parse a repo spec into a clone slug and an optional ref to check out.
+# Parse a repo spec into a clone slug, an optional ref to check out, and an
+# optional destination directory name.
 #
 # Accepted forms (org defaults to $env.WORKBENCH_DEFAULT_GITHUB_ORG when omitted):
 #   <repo>                 <org>/<repo>
 #   <repo>@<ref>           <org>/<repo>@<ref>    ref = tag or branch
 #   <repo>#<pr>            <org>/<repo>#<pr>     pr  = PR number
+#   <repo>=<dir>           clone into <dir> instead of the repo name
 #
-# The ref begins at the first `@` or `#`; everything before it is the
-# `[<org>/]<repo>` name. Splitting there (rather than on `/`) keeps branch names
-# that contain slashes intact. Returns { slug, ref: "@<ref>" | "#<pr>" | null }.
+# `=<dir>` is cut from the last `=` in the spec, so a branch name may contain
+# `=` but a destination name may not.
+#
+# The ref begins at the first `@` or `#` of what remains; everything before it
+# is the `[<org>/]<repo>` name. Splitting there (rather than on `/`) keeps
+# branch names that contain slashes intact.
+#
+# Returns { slug, ref: "@<ref>" | "#<pr>" | null, dir: string | null }.
 def parse-repo-spec [spec: string]: nothing -> record {
-  let sigils = ([($spec | str index-of "@") ($spec | str index-of "#")]
+  let split = (split-dest $spec)
+  let rest = $split.rest
+  let sigils = ([($rest | str index-of "@") ($rest | str index-of "#")]
     | where {|i| $i >= 0 })
   let cut = if ($sigils | is-empty) { null } else { $sigils | math min }
-  let name = if $cut == null { $spec } else { $spec | str substring 0..<$cut }
-  let ref = if $cut == null { null } else { $spec | str substring $cut.. }
+  let name = if $cut == null { $rest } else { $rest | str substring 0..<$cut }
+  let ref = if $cut == null { null } else { $rest | str substring $cut.. }
   let slug = if ($name | str contains "/") {
     $name
   } else {
@@ -301,7 +310,41 @@ def parse-repo-spec [spec: string]: nothing -> record {
     }
     $"($org)/($name)"
   }
-  { slug: $slug, ref: $ref }
+  { slug: $slug, ref: $ref, dir: $split.dir }
+}
+
+# Cut a trailing `=<dir>` off a repo spec, returning { rest, dir }.
+#
+# The destination is a single directory name directly under the workspace:
+# `workspace-repos` finds repos one level down, so a nested path would hide the
+# clone from every command that walks the workspace.
+def split-dest [spec: string]: nothing -> record {
+  let cut = ($spec | str index-of --end "=")
+  if $cut < 0 { return { rest: $spec, dir: null } }
+  let rest = ($spec | str substring 0..<$cut)
+  let dir = ($spec | str substring ($cut + 1)..)
+  if ($rest | is-empty) {
+    error make --unspanned {
+      msg: $"No repo before '=' in '($spec)'."
+      code: "workspace::malformed_repo_spec"
+      help: "Usage: [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]"
+    }
+  }
+  if ($dir | is-empty) {
+    error make --unspanned {
+      msg: $"Empty destination in '($spec)'."
+      code: "workspace::empty_destination"
+      help: $"Name the directory, as in '($rest)=my-dir', or drop the '='."
+    }
+  }
+  if ($dir | str contains "/") or ($dir in [".", ".."]) {
+    error make --unspanned {
+      msg: $"Destination '($dir)' is not a plain directory name."
+      code: "workspace::nested_destination"
+      help: "A clone lands one level under the workspace root, so the destination cannot be a path."
+    }
+  }
+  { rest: $rest, dir: $dir }
 }
 
 # Check out a ref inside a freshly cloned repo. `@<name>` is a tag or branch
@@ -350,9 +393,10 @@ def clone-repo [slug: string, target: path, full: bool]: nothing -> nothing {
 
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
-# Each repo is `[<org>/]<repo>[<ref>]`. A bare name is resolved against
+# Each repo is `[<org>/]<repo>[<ref>][=<dir>]`. A bare name is resolved against
 # $env.WORKBENCH_DEFAULT_GITHUB_ORG; prefix `owner/` to override the org. An optional
 # trailing ref checks out after cloning: `@<tag-or-branch>` or `#<pr-number>`.
+# `=<dir>` names the directory to clone into, in place of the repo name.
 #
 # Clones are shallow and blobless by default: the last 90 days of history, and
 # file contents only for what's checked out. Pass --full for a complete clone.
@@ -362,9 +406,10 @@ def clone-repo [slug: string, target: path, full: bool]: nothing -> nothing {
 #   workspace clone web-app@v1.2.3        # tag or branch
 #   workspace clone web-app#1234          # PR number
 #   workspace clone other-org/web-app@my-branch
+#   workspace clone web-app=dashboard     # clone into `dashboard`
 #   workspace clone web-app --full        # complete history
 export def clone [
-  ...repos: string  # Repos to clone: [<org>/]<repo>[@<tag|branch> | #<pr>]
+  ...repos: string  # Repos to clone: [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]
   --choose (-c)     # Pick a target workspace interactively instead of using the current one
   --full            # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
@@ -388,19 +433,21 @@ export def clone [
     error make --unspanned {
       msg: "No repos given."
       code: "workspace::missing_argument"
-      help: "Usage: workspace clone [<org>/]<repo>[@<tag|branch> | #<pr>]..."
+      help: "Usage: workspace clone [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]..."
     }
   }
   for repo in $repos {
     let parsed = (parse-repo-spec $repo)
     let slug = $parsed.slug
-    let target = ($dir | path join ($slug | path basename))
+    let dest = ($parsed.dir | default ($slug | path basename))
+    let target = ($dir | path join $dest)
     if ($target | path exists) {
-      print $"(ansi yellow)skip ($slug) \(already cloned\)(ansi reset)"
+      print $"(ansi yellow)skip ($slug) \(($dest) already exists\)(ansi reset)"
       continue
     }
     let suffix = if $parsed.ref != null { $" ($parsed.ref)" } else { "" }
-    print $"(ansi green)clone ($slug)($suffix)(ansi reset)"
+    let into = if $parsed.dir != null { $" into ($dest)" } else { "" }
+    print $"(ansi green)clone ($slug)($suffix)($into)(ansi reset)"
     clone-repo $slug $target $full
     if $parsed.ref != null {
       checkout-ref $target $parsed.ref

@@ -30,6 +30,7 @@ help workspace                   # list commands
 workspace new ENG-123 web-app api-service            # create + cd + clone
 workspace clone some-repo                            # clone into current workspace
 workspace clone other-org/their-repo                 # override the default org
+workspace clone their-repo=alt                       # clone into a named directory
 workspace attach sms                                 # cd into a workspace (name/partial; picker if ambiguous or omitted)
 workspace delete sms                                 # permanently remove (fuzzy multi-select + contents preview + confirm)
 workspace trash sms                                  # same, but route through the system trash (recoverable)
