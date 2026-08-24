@@ -91,7 +91,7 @@ Per repo, for the current branch's chain:
    step 3 has already moved:
 
    ```
-   git rebase --onto <parent> <recorded baseSha> <branch> --autostash
+   git rebase --onto <parent> <recorded baseSha> <branch>
    ```
 
    `--onto` with the recorded sha replays exactly the commits in
@@ -106,9 +106,12 @@ Per repo, for the current branch's chain:
 
 Flags:
 
-- `--all` syncs every recorded chain in the repo, not just the current branch's.
 - `--dry-run` prints the resolution table and performs no fetch or rebase.
 - `--onto <ref>` forces the root base for every repo.
+- `--repo <name>` scopes to one repo, as on the other verbs.
+- `--all`, syncing every recorded chain rather than the current branch's, is not
+  implemented. It needs a checkout per chain, and the current branch's chain
+  covers the case the command was built for.
 
 Result: one row per repo with `repo`, `branch`, `base`, `source`
 (`recorded` / `pr` / `default`), and `action` (`up-to-date`, `rebased`,
@@ -122,7 +125,22 @@ Result: one row per repo with `repo`, `branch`, `base`, `source`
 - **Merged parent.** The recorded base no longer exists on origin. GitHub
   retargets the child PR on merge, so read the PR's current `baseRefName`,
   rewrite the record, and continue.
-- **Dirty tree.** `--autostash` handles it.
+- **Dirty tree.** Stashed once per repo before the first rebase and restored
+  after the last, rather than `--autostash` per link. Per-link autostash pops
+  the changes onto each intermediate branch in turn, which can conflict against
+  a branch the changes were never written for. A conflict leaves the stash in
+  place, because popping onto a half-applied tree tangles the two, and the
+  reason says so.
+- **A rebase already in progress.** Reported and skipped. This check has to come
+  before the detached-HEAD check, since a stopped rebase also detaches HEAD and
+  would otherwise be reported as the wrong cause.
+
+### `--onto` and the record
+
+The lowest link's record must name the branch its sha came from. Under `--onto`
+that is the forced root, not what the chain previously said, or the record pairs
+one branch's name with another branch's tip and the next sync replays the wrong
+commits.
 
 ## `branch new`
 
@@ -208,6 +226,29 @@ slots in beside the other two keys with no restructuring.
   needs one `gh pr view` per PR for counts. Settled in phase 5.
 
 ## Done
+
+Phase 4, in `nushell/workspace/branch.nu`:
+
+`branch sync`, with `--choose`, `--repo`, `--onto`, and `--dry-run`. A repo on
+its default branch is fetched and fast-forwarded; a repo on a stack is rebased
+bottom-up.
+
+Tested against a fixture with real local `origin` remotes: a two-link stack
+rebased onto a moved `main` carrying exactly one commit per link, a plain repo
+fast-forwarded, records refreshed to the new parent tips, local `main` moved up
+without a checkout, a second run reporting `up-to-date`, a dirty tree stashed
+and restored with untracked files untouched, a mid-chain conflict left in place
+with the stash retained, the resolve-and-continue path, a diverged local default
+branch, `--onto` to another branch and back, and a root that origin does not
+have.
+
+Two bugs the tests caught: a conflicted repo reported `detached HEAD` rather
+than the rebase in progress, and `--onto` recorded the old base name against
+the new base's sha.
+
+All 17 `error make` calls across the module now pass `--unspanned`. Every one is
+an expected user-facing condition, and a source span and stack trace for "not
+inside a workspace" is noise, not help.
 
 Phase 3, in `nushell/workspace/branch.nu`:
 
