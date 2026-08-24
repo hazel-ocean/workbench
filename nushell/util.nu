@@ -375,6 +375,209 @@ export def workspace-repos [name: string]: nothing -> list<path> {
   }
 }
 
+# Git config keys recording which branch a branch was built on, and that
+# branch's tip at the time. Git owns the `branch.<name>` section, so a branch
+# rename carries these keys and a branch delete removes them. Git lowercases the
+# key when it stores it, so `--get-regexp` patterns must match the lowered form.
+const BASE_KEY = "workbenchBase"
+const BASE_SHA_KEY = "workbenchBaseSha"
+
+# Longest base chain `branch-chain` will walk before calling it malformed.
+const CHAIN_DEPTH_LIMIT = 10
+
+# The current branch of a repo, or null when HEAD is detached.
+export def current-branch [repo: path]: nothing -> oneof<string, nothing> {
+  let name = (^git -C $repo branch --show-current | str trim)
+  if ($name | is-empty) { null } else { $name }
+}
+
+export def local-branch-exists [repo: path, branch: string]: nothing -> bool {
+  let out = (^git -C $repo rev-parse --verify --quiet $"refs/heads/($branch)" | complete)
+  $out.exit_code == 0
+}
+
+# The single value of `key` among a branch's parsed config rows, or null.
+def config-value [rows: table, key: string]: nothing -> oneof<string, nothing> {
+  let hits = ($rows | where key == $key | get value)
+  if ($hits | is-empty) { null } else { $hits | first }
+}
+
+# Every branch's recorded base and base sha, as a `branch`/`base`/`sha` table.
+#
+# One `git config` call returns the whole repo, so a caller iterating branches
+# reads once and filters. A branch name may contain dots and slashes, so the
+# name is parsed as everything between the `branch.` prefix and the trailing
+# key rather than by splitting on dots.
+export def branch-records [repo: path]: nothing -> table {
+  let key = ($BASE_KEY | str lowercase)
+  let sha_key = ($BASE_SHA_KEY | str lowercase)
+  let out = (^git -C $repo config --get-regexp $"^branch\\..+\\.($key)\(sha\)?$" | complete)
+  if $out.exit_code != 0 { return [] }
+  let parsed = ($out.stdout
+    | lines
+    | parse --regex $"^branch\\.\(?<branch>.+\)\\.\(?<key>($sha_key)|($key)\) \(?<value>\\S+\)$")
+  $parsed | get branch | uniq | each {|b|
+    let rows = ($parsed | where branch == $b)
+    {
+      branch: $b
+      base: (config-value $rows $key)
+      sha: (config-value $rows $sha_key)
+    }
+  }
+}
+
+# Record the branch a branch is built on, and that branch's current tip.
+export def set-branch-base [
+  repo: path
+  branch: string
+  base: string
+  sha: string
+]: nothing -> nothing {
+  ^git -C $repo config set $"branch.($branch).($BASE_KEY)" $base
+  ^git -C $repo config set $"branch.($branch).($BASE_SHA_KEY)" $sha
+}
+
+# Drop a branch's recorded base. Unsetting a missing key is not an error here.
+export def clear-branch-base [repo: path, branch: string]: nothing -> nothing {
+  ^git -C $repo config unset $"branch.($branch).($BASE_KEY)" | complete | ignore
+  ^git -C $repo config unset $"branch.($branch).($BASE_SHA_KEY)" | complete | ignore
+}
+
+# The repo's default branch, or null when neither source answers.
+#
+# `gh repo clone` sets `refs/remotes/origin/HEAD`, so the local read almost
+# always wins; the `gh` call covers a clone made some other way, at the cost of
+# a network round trip.
+export def default-branch [repo: path]: nothing -> oneof<string, nothing> {
+  let head = (^git -C $repo symbolic-ref --short refs/remotes/origin/HEAD | complete)
+  if $head.exit_code == 0 {
+    return ($head.stdout | str trim | str replace --regex '^origin/' '')
+  }
+  let out = (do { cd $repo; ^gh repo view --json defaultBranchRef } | complete)
+  if $out.exit_code != 0 { return null }
+  $out.stdout | from json | get defaultBranchRef.name
+}
+
+# True when origin has a branch of this name, i.e. the branch has been pushed.
+export def remote-branch-exists [repo: path, branch: string]: nothing -> bool {
+  let out = (^git -C $repo rev-parse --verify --quiet $"refs/remotes/origin/($branch)" | complete)
+  $out.exit_code == 0
+}
+
+const PR_LIST_LIMIT = 100
+
+# Your open PRs in a repo. Each row's head and base are one edge of a branch
+# stack, so a single call resolves every link of a stack you own.
+#
+# Scoped to `--author @me` because an unscoped list truncates at
+# $PR_LIST_LIMIT in a busy repo, and silently dropping the edge you need is
+# worse than missing someone else's PR. `pr-for-branch` covers the remainder.
+export def repo-prs [repo: path]: nothing -> table {
+  let out = (do {
+    cd $repo
+    ^gh pr list --author @me --json number,headRefName,baseRefName,url --limit $PR_LIST_LIMIT
+  } | complete)
+  if $out.exit_code != 0 { return [] }
+  $out.stdout | from json
+}
+
+# The open PR whose head is `branch`, or null. One network call, so callers
+# reach for it only when the bulk `repo-prs` table has no row for the branch.
+export def pr-for-branch [repo: path, branch: string]: nothing -> oneof<record, nothing> {
+  let out = (do {
+    cd $repo
+    ^gh pr list --head $branch --json number,headRefName,baseRefName,url --limit 1
+  } | complete)
+  if $out.exit_code != 0 { return null }
+  let rows = ($out.stdout | from json)
+  if ($rows | is-empty) { null } else { $rows | first }
+}
+
+# Which branch `branch` is built on: `{ base, sha, source }`.
+#
+# `source` is how the base was found, in the order tried:
+#   recorded  the git config record, when the branch it names still exists
+#   pr        the base of the branch's open PR
+#   default   the repo default branch
+#
+# A recorded base whose branch is gone is the merged-parent case: it falls
+# through to the PR, which GitHub retargets on merge. All three are null when
+# nothing resolves, which is the root of a chain.
+export def resolve-base [
+  repo: path
+  branch: string
+  records: table
+  prs: table
+  default: oneof<string, nothing>
+]: nothing -> record {
+  let recorded = ($records | where branch == $branch)
+  if ($recorded | is-not-empty) {
+    let r = ($recorded | first)
+    if $r.base != null and (local-branch-exists $repo $r.base) {
+      return { base: $r.base, sha: $r.sha, source: "recorded" }
+    }
+  }
+  let bulk = ($prs | where headRefName == $branch)
+  let pr = if ($bulk | is-not-empty) {
+    $bulk | first
+  } else if (remote-branch-exists $repo $branch) {
+    # Not one of yours, or older than the bulk window. An unpushed branch has no
+    # PR to find, so the remote check keeps the extra call off the common path.
+    pr-for-branch $repo $branch
+  }
+  if $pr != null {
+    return { base: $pr.baseRefName, sha: null, source: "pr" }
+  }
+  if $default != null and $branch != $default {
+    return { base: $default, sha: null, source: "default" }
+  }
+  { base: null, sha: null, source: null }
+}
+
+# The stack `branch` sits in, tip first, one row per link.
+#
+# Each row is `{ branch, base, sha, source }`. Walking stops at the default
+# branch, at a base with no local branch of that name, or when nothing
+# resolves; the last row's base is the root, and is the only one to fetch from
+# origin. A rebase consumes the rows in reverse, lowest link first.
+#
+# A cycle or a chain past $CHAIN_DEPTH_LIMIT raises. Callers running across
+# repos should wrap this in `try` so one malformed repo does not end the run.
+export def branch-chain [
+  repo: path
+  branch: string
+  records: table
+  prs: table
+  default: oneof<string, nothing>
+]: nothing -> table {
+  mut chain = []
+  mut seen = []
+  mut current = $branch
+  loop {
+    if ($current in $seen) {
+      error make { msg: $"Base chain for '($branch)' cycles at '($current)'." }
+    }
+    if ($chain | length) >= $CHAIN_DEPTH_LIMIT {
+      error make {
+        msg: $"Base chain for '($branch)' is deeper than ($CHAIN_DEPTH_LIMIT) links."
+      }
+    }
+    $seen = ($seen | append $current)
+    let resolved = (resolve-base $repo $current $records $prs $default)
+    if $resolved.base == null { break }
+    $chain = ($chain | append {
+      branch: $current
+      base: $resolved.base
+      sha: $resolved.sha
+      source: $resolved.source
+    })
+    if $resolved.base == $default { break }
+    if not (local-branch-exists $repo $resolved.base) { break }
+    $current = $resolved.base
+  }
+  $chain
+}
+
 # Commits on HEAD that the upstream branch lacks, and the reverse. A branch can
 # be both at once, so they are separate counts, not one signed number.
 #
