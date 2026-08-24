@@ -128,16 +128,23 @@ Result: one row per repo with `repo`, `branch`, `base`, `source`
 
 `workspace branch new <name>`, in each repo:
 
-1. Resolve the current branch's base and record it as the new branch's base.
-   The current branch is the parent, so the recorded base is the current branch
-   itself, and `workbenchBaseSha` is its tip.
+1. The current branch is the parent, so it becomes the recorded base, and its
+   tip becomes `workbenchBaseSha`.
 2. `git checkout -b <name>`.
 3. Write both keys.
 
 Branch creation is the only moment the base is known for certain, which is the
 point of the command.
 
-Skip a repo whose branch already exists, and say so.
+The run is all-or-nothing. Every target repo is checked first, and a blocker in
+any one of them (detached HEAD, or the name already taken) refuses the whole
+run and names the repos at fault. A workspace that is branched in some repos
+and not others is worse than one that is not branched at all, because the next
+`sync` then treats the two halves differently. `--partial` opts into creating
+it where possible.
+
+`--repo <name>` scopes it to one repo, as on `branch base`. A malformed name is
+rejected by `git check-ref-format` before any repo is touched.
 
 ## `branch base`
 
@@ -201,6 +208,16 @@ slots in beside the other two keys with no restructuring.
   needs one `gh pr view` per PR for counts. Settled in phase 5.
 
 ## Done
+
+Phase 3, in `nushell/workspace/branch.nu`:
+
+`branch new`, with `--choose`, `--repo`, and `--partial`, sharing `branch
+base`'s repo selection through a `target-repos` helper.
+
+Tested through the overlay: creating across a workspace, stacking a second
+branch on the first and seeing the record chain, a name already taken, a
+detached HEAD, `--repo` scoping, `--partial`, a malformed name, and a dirty
+tree carrying over to the new branch.
 
 Phase 2, in `nushell/workspace/branch.nu`, wired in through `export use
 branch.nu *`:
