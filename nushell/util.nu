@@ -362,7 +362,11 @@ export def try-infer-workspace []: nothing -> oneof<string, nothing> {
 export def workspace-repos [name: string]: nothing -> list<path> {
   let dir = (workspace-dir $name)
   if not ($dir | path exists) {
-    error make --unspanned { msg: $"Workspace '($name)' does not exist." }
+    error make --unspanned {
+      msg: $"Workspace '($name)' does not exist."
+      code: "workspace::unknown_workspace"
+      help: "Create it with `workspace new <name>`, or list them with `workspace list`."
+    }
   }
   if $name == (workspace-home) {
     if ($dir | path join ".git" | path exists) { [$dir] } else { [] }
@@ -555,11 +559,17 @@ export def branch-chain [
   mut current = $branch
   loop {
     if ($current in $seen) {
-      error make --unspanned { msg: $"Base chain for '($branch)' cycles at '($current)'." }
+      error make --unspanned {
+        msg: $"Base chain for '($branch)' cycles at '($current)'."
+        code: "workspace::base_chain_cycle"
+        help: "Point one branch at a different base with `workspace branch base <ref>`."
+      }
     }
     if ($chain | length) >= $CHAIN_DEPTH_LIMIT {
       error make --unspanned {
         msg: $"Base chain for '($branch)' is deeper than ($CHAIN_DEPTH_LIMIT) links."
+        code: "workspace::base_chain_too_deep"
+        help: "Inspect the chain with `workspace branch base`, then shorten it with `workspace branch base <ref>`."
       }
     }
     $seen = ($seen | append $current)
@@ -724,7 +734,11 @@ export def select-workspaces [
   let orphans = (if $with_orphans { orphan-sessions --sessions $sessions } else { [] })
   let all = (($ws_names ++ ($orphans | get name)) | sort --ignore-case)
   if ($all | is-empty) {
-    error make --unspanned { msg: "No workspaces found." }
+    error make --unspanned {
+      msg: "No workspaces found."
+      code: "workspace::no_workspaces"
+      help: "Create one with `workspace new <name> [<repo>...]`."
+    }
   }
 
   # A non-null query resolves to its matches; empty matches (and a null query)
@@ -791,13 +805,20 @@ export def select-workspace [choose: bool]: nothing -> string {
   if $choose {
     let sel = (select-workspaces --prompt "Workspace:")
     if ($sel | is-empty) {
-      error make --unspanned { msg: "Nothing selected." }
+      error make --unspanned {
+        msg: "Nothing selected."
+        code: "workspace::nothing_selected"
+      }
     }
     $sel | first
   } else {
     let inferred = (try-infer-workspace)
     if $inferred == null {
-      error make --unspanned { msg: "Not inside a workspace. Pass --choose or cd into one." }
+      error make --unspanned {
+        msg: "Not inside a workspace."
+        code: "workspace::not_in_workspace"
+        help: "cd into one with `workspace enter`, or pass --choose to pick one."
+      }
     }
     $inferred
   }
@@ -853,7 +874,10 @@ export def select-zellij-target [choose: bool]: nothing -> record {
     | sort-by --ignore-case name
     | input list --fuzzy --display {|it| $it.label } "Session:")
   if $picked == null {
-    error make --unspanned { msg: "Nothing selected." }
+    error make --unspanned {
+      msg: "Nothing selected."
+      code: "workspace::nothing_selected"
+    }
   }
   {
     session: $picked.session
