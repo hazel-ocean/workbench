@@ -39,13 +39,21 @@ def target-repos [
 ]: nothing -> list<path> {
   let all = (workspace-repos (select-workspace $choose))
   if ($all | is-empty) {
-    error make --unspanned { msg: "No git repos found in this workspace." }
+    error make --unspanned {
+      msg: "No git repos found in this workspace."
+      code: "workspace::no_repos"
+      help: "Clone one with `workspace clone <repo>`."
+    }
   }
   if $only == null { return $all }
   let hit = ($all | where {|r| ($r | path basename) == $only })
   if ($hit | is-empty) {
     let names = ($all | each {|r| $r | path basename } | str join ", ")
-    error make --unspanned { msg: $"No repo '($only)' in this workspace. Available: ($names)." }
+    error make --unspanned {
+      msg: $"No repo '($only)' in this workspace."
+      code: "workspace::unknown_repo"
+      help: $"Available: ($names)."
+    }
   }
   $hit
 }
@@ -79,7 +87,11 @@ export def "branch base" [
   --repair          # Rebuild missing records from open PRs
 ]: nothing -> table {
   if $ref != null and $repair {
-    error make --unspanned { msg: "Pass a branch or --repair, not both." }
+    error make --unspanned {
+      msg: "Pass a branch or --repair, not both."
+      code: "workspace::conflicting_options"
+      help: "A branch records that base; --repair rebuilds every record from open PRs."
+    }
   }
   let repos = (target-repos $choose $repo)
   $repos | par-each --keep-order {|repo|
@@ -218,7 +230,11 @@ export def "branch new" [
   # the workspace half-branched.
   let check = (^git check-ref-format --branch $name | complete)
   if $check.exit_code != 0 {
-    error make --unspanned { msg: $"'($name)' is not a valid branch name." }
+    error make --unspanned {
+      msg: $"'($name)' is not a valid branch name."
+      code: "workspace::invalid_branch_name"
+      help: "Git rejects spaces, a leading dash, and `..`. See `git help check-ref-format`."
+    }
   }
   let checked = (target-repos $choose $repo | par-each --keep-order {|r|
     {
@@ -232,11 +248,9 @@ export def "branch new" [
   if ($blocked | is-not-empty) and (not $partial) {
     let detail = ($blocked | each {|b| $"  ($b.name): ($b.blocker)" } | str join (char newline))
     error make --unspanned {
-      msg: ([
-        $"Cannot create '($name)' in every repo:"
-        $detail
-        "Nothing was created. Pass --partial to create it where possible."
-      ] | str join (char newline))
+      msg: ([$"Cannot create '($name)' in every repo:" $detail] | str join (char newline))
+      code: "workspace::branch_blocked"
+      help: "Nothing was created. Pass --partial to create it in the repos that can take it."
     }
   }
   $checked | par-each --keep-order {|c|

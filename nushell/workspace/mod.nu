@@ -294,7 +294,9 @@ def parse-repo-spec [spec: string]: nothing -> record {
     let org = $env.WORKBENCH_DEFAULT_GITHUB_ORG?
     if ($org | is-empty) {
       error make --unspanned {
-        msg: $"No default org for bare repo '($name)'. Set WORKBENCH_DEFAULT_GITHUB_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
+        msg: $"No default org for bare repo '($name)'."
+        code: "workspace::no_default_org"
+        help: $"Set WORKBENCH_DEFAULT_GITHUB_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
       }
     }
     $"($org)/($name)"
@@ -368,16 +370,26 @@ export def clone [
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   if $name == (workspace-home) {
-    error make --unspanned { msg: "Cannot clone into the meta workspace; pick a real workspace." }
+    error make --unspanned {
+      msg: "Cannot clone into the meta workspace."
+      code: "workspace::meta_workspace"
+      help: "Pass --choose to pick a real workspace, or cd into one first."
+    }
   }
   let dir = (workspace-dir $name)
   if not ($dir | path exists) {
     error make --unspanned {
-      msg: $"Workspace '($name)' does not exist. Create it with `workspace new`."
+      msg: $"Workspace '($name)' does not exist."
+      code: "workspace::unknown_workspace"
+      help: "Create it with `workspace new <name>`."
     }
   }
   if ($repos | is-empty) {
-    error make --unspanned { msg: "No repos given. Usage: workspace clone <repo>..." }
+    error make --unspanned {
+      msg: "No repos given."
+      code: "workspace::missing_argument"
+      help: "Usage: workspace clone [<org>/]<repo>[@<tag|branch> | #<pr>]..."
+    }
   }
   for repo in $repos {
     let parsed = (parse-repo-spec $repo)
@@ -433,7 +445,11 @@ export def "in-each" [
   let name = (select-workspace $choose)
   let repos = (workspace-repos $name)
   if ($repos | is-empty) {
-    error make --unspanned { msg: $"No git repos found in workspace '($name)'." }
+    error make --unspanned {
+      msg: $"No git repos found in workspace '($name)'."
+      code: "workspace::no_repos"
+      help: "Clone one with `workspace clone <repo>`."
+    }
   }
   let runner = {|repo|
     let name = ($repo | path basename)

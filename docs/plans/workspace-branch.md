@@ -246,9 +246,12 @@ Two bugs the tests caught: a conflicted repo reported `detached HEAD` rather
 than the rebase in progress, and `--onto` recorded the old base name against
 the new base's sha.
 
-All 17 `error make` calls across the module now pass `--unspanned`. Every one is
-an expected user-facing condition, and a source span and stack trace for "not
-inside a workspace" is noise, not help.
+All 17 `error make` calls across the module now pass `--unspanned` and carry a
+`code` and, where there is an action to suggest, a `help` line. Every one is an
+expected user-facing condition, so a source span and a generic
+`nu::shell::error` label are noise. Codes are namespaced `workspace::`, e.g.
+`workspace::not_in_workspace`, `workspace::unknown_repo`,
+`workspace::invalid_branch_name`.
 
 Phase 3, in `nushell/workspace/branch.nu`:
 
