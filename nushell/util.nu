@@ -362,7 +362,7 @@ export def try-infer-workspace []: nothing -> oneof<string, nothing> {
 export def workspace-repos [name: string]: nothing -> list<path> {
   let dir = (workspace-dir $name)
   if not ($dir | path exists) {
-    error make { msg: $"Workspace '($name)' does not exist." }
+    error make --unspanned { msg: $"Workspace '($name)' does not exist." }
   }
   if $name == (workspace-home) {
     if ($dir | path join ".git" | path exists) { [$dir] } else { [] }
@@ -555,10 +555,10 @@ export def branch-chain [
   mut current = $branch
   loop {
     if ($current in $seen) {
-      error make { msg: $"Base chain for '($branch)' cycles at '($current)'." }
+      error make --unspanned { msg: $"Base chain for '($branch)' cycles at '($current)'." }
     }
     if ($chain | length) >= $CHAIN_DEPTH_LIMIT {
-      error make {
+      error make --unspanned {
         msg: $"Base chain for '($branch)' is deeper than ($CHAIN_DEPTH_LIMIT) links."
       }
     }
@@ -724,7 +724,7 @@ export def select-workspaces [
   let orphans = (if $with_orphans { orphan-sessions --sessions $sessions } else { [] })
   let all = (($ws_names ++ ($orphans | get name)) | sort --ignore-case)
   if ($all | is-empty) {
-    error make { msg: "No workspaces found." }
+    error make --unspanned { msg: "No workspaces found." }
   }
 
   # A non-null query resolves to its matches; empty matches (and a null query)
@@ -791,13 +791,13 @@ export def select-workspace [choose: bool]: nothing -> string {
   if $choose {
     let sel = (select-workspaces --prompt "Workspace:")
     if ($sel | is-empty) {
-      error make { msg: "Nothing selected." }
+      error make --unspanned { msg: "Nothing selected." }
     }
     $sel | first
   } else {
     let inferred = (try-infer-workspace)
     if $inferred == null {
-      error make { msg: "Not inside a workspace. Pass --choose or cd into one." }
+      error make --unspanned { msg: "Not inside a workspace. Pass --choose or cd into one." }
     }
     $inferred
   }
@@ -853,7 +853,7 @@ export def select-zellij-target [choose: bool]: nothing -> record {
     | sort-by --ignore-case name
     | input list --fuzzy --display {|it| $it.label } "Session:")
   if $picked == null {
-    error make { msg: "Nothing selected." }
+    error make --unspanned { msg: "Nothing selected." }
   }
   {
     session: $picked.session

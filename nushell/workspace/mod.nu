@@ -293,7 +293,7 @@ def parse-repo-spec [spec: string]: nothing -> record {
   } else {
     let org = $env.WORKBENCH_DEFAULT_GITHUB_ORG?
     if ($org | is-empty) {
-      error make {
+      error make --unspanned {
         msg: $"No default org for bare repo '($name)'. Set WORKBENCH_DEFAULT_GITHUB_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
       }
     }
@@ -368,16 +368,16 @@ export def clone [
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
   if $name == (workspace-home) {
-    error make { msg: "Cannot clone into the meta workspace; pick a real workspace." }
+    error make --unspanned { msg: "Cannot clone into the meta workspace; pick a real workspace." }
   }
   let dir = (workspace-dir $name)
   if not ($dir | path exists) {
-    error make {
+    error make --unspanned {
       msg: $"Workspace '($name)' does not exist. Create it with `workspace new`."
     }
   }
   if ($repos | is-empty) {
-    error make { msg: "No repos given. Usage: workspace clone <repo>..." }
+    error make --unspanned { msg: "No repos given. Usage: workspace clone <repo>..." }
   }
   for repo in $repos {
     let parsed = (parse-repo-spec $repo)
@@ -433,7 +433,7 @@ export def "in-each" [
   let name = (select-workspace $choose)
   let repos = (workspace-repos $name)
   if ($repos | is-empty) {
-    error make { msg: $"No git repos found in workspace '($name)'." }
+    error make --unspanned { msg: $"No git repos found in workspace '($name)'." }
   }
   let runner = {|repo|
     let name = ($repo | path basename)
