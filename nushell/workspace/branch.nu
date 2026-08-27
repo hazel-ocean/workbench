@@ -382,7 +382,7 @@ def sync-repo [
     base: null
     source: null
     links: 0
-    action: "skipped"
+    action: null
     reason: null
   }
   # A stopped rebase also detaches HEAD, so it has to be reported before the
@@ -477,7 +477,7 @@ def fast-forward-current [repo: path, branch: string, remote: string]: nothing -
   }
   let out = (^git -C $repo merge --ff-only $remote | complete)
   if $out.exit_code != 0 {
-    return { action: "skipped", reason: $"'($branch)' has diverged from ($remote)" }
+    return { action: null, reason: $"'($branch)' has diverged from ($remote)" }
   }
   { action: "fast-forwarded", reason: null }
 }
@@ -504,7 +504,7 @@ def rebase-chain [
     let recorded = if $i == 0 { $root } else { $link.base }
     let tip = (rev $repo $parent)
     if $tip == null {
-      return { action: "skipped", reason: $"no ref '($parent)'" }
+      return { action: null, reason: $"no ref '($parent)'" }
     }
     if (contains-ref $repo $tip $link.branch) {
       set-branch-base $repo $link.branch $recorded $tip

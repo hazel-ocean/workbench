@@ -115,7 +115,8 @@ Flags:
 
 Result: one row per repo with `repo`, `branch`, `base`, `source`
 (`recorded` / `pr` / `default`), and `action` (`up-to-date`, `rebased`,
-`conflict`, `skipped`), plus a `reason` when skipped.
+`conflict`, or null when nothing was done), plus a `reason` whenever the action
+is null.
 
 ### Failure handling
 
