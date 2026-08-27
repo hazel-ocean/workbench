@@ -632,19 +632,42 @@ def upstream-divergence [repo: path]: nothing -> record {
   { ahead: ($pair | get 1 | into int), behind: ($pair | get 0 | into int) }
 }
 
-# The PR for a repo's current branch, as a clickable `#<number>`, or null when
-# there is no PR. Skipped without an upstream: an unpushed branch cannot have
-# one, and `gh` costs a network round trip per repo.
-def pr-link [repo: path, upstream: bool]: nothing -> any {
+# The PR for a repo's current branch as `{ number, url, state, isDraft }`, or
+# null when there is no PR. A draft reports state OPEN, so its own field has to
+# come along. Skipped without an upstream: an unpushed branch cannot have a PR,
+# and `gh` costs a network round trip per repo.
+def branch-pr [repo: path, upstream: bool]: nothing -> oneof<record, nothing> {
   if (not $upstream) or (not (tool-installed "gh")) {
     return null
   }
-  let out = (do { cd $repo; ^gh pr view --json number,url } | complete)
+  let out = (do { cd $repo; ^gh pr view --json number,url,state,isDraft } | complete)
   if $out.exit_code != 0 {
     return null
   }
-  let pr = ($out.stdout | from json)
-  $pr.url | ansi link --text $"(ansi blue)#($pr.number)(ansi reset)"
+  $out.stdout | from json
+}
+
+# A PR as a clickable `#<number>`: blue when open, yellow while a draft, struck
+# through once it is no longer open.
+def pr-link [pr: oneof<record, nothing>]: nothing -> any {
+  if $pr == null { return null }
+  let paint = match $pr.state {
+    "MERGED" => $"(ansi attr_strike)(ansi purple)"
+    "CLOSED" => $"(ansi attr_strike)(ansi red)"
+    _ => (if $pr.isDraft { (ansi yellow) } else { (ansi blue) })
+  }
+  $pr.url | ansi link --text $"($paint)#($pr.number)(ansi reset)"
+}
+
+# The branch name, marked by the fate of its PR: a check once merged, struck
+# through once closed unmerged. An open PR, or no PR, leaves the name plain.
+def mark-branch [branch: string, pr: oneof<record, nothing>]: nothing -> string {
+  if $pr == null { return $branch }
+  match $pr.state {
+    "MERGED" => $"($branch) (ansi green)✓(ansi reset)"
+    "CLOSED" => $"(ansi attr_strike)($branch)(ansi reset)"
+    _ => $branch
+  }
 }
 
 # Branch, working-tree state, upstream divergence, and PR for a single repo path.
@@ -661,12 +684,13 @@ export def repo-summary [repo: path]: nothing -> record {
   }
   let porcelain = (^git -C $repo status --porcelain)
   let divergence = (upstream-divergence $repo)
+  let pr = (branch-pr $repo ($divergence.ahead != null))
   {
     name: ($repo | path basename)
-    branch: $branch
+    branch: (mark-branch $branch $pr)
     status: (if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" })
     ...$divergence
-    pr: (pr-link $repo ($divergence.ahead != null))
+    pr: (pr-link $pr)
   }
 }
 
@@ -726,7 +750,7 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     let repo = ($repos | where name == $base | get 0?)
     let detail = if $repo != null {
       let ahead = (if ($repo.ahead | default 0) > 0 { $", ahead ($repo.ahead)" } else { "" })
-      $" (ansi dark_gray)[($repo.branch), ($repo.status)($ahead)](ansi reset)"
+      $" (ansi dark_gray)[($repo.branch)(ansi dark_gray), ($repo.status)($ahead)](ansi reset)"
     } else {
       ""
     }
