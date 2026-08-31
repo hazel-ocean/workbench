@@ -60,7 +60,7 @@ def target-repos [
         help: $"Outside a workspace this acts on '($name)' alone."
       }
     }
-    print $"(ansi yellow)not in a workspace; acting on ($name) alone(ansi reset)"
+    print $"(ansi yellow)Not in a workspace; syncing only ($name)(ansi reset)"
     return [$loose]
   }
   let all = (workspace-repos (select-workspace $choose))
