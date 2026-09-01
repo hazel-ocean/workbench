@@ -298,20 +298,16 @@ export def paint-state [
 
 # Attach to (or create) a Zellij session in `dir`, re-prompting on a bad name.
 #
-# The name is created detached first (`--create-background | complete`) so an
-# invalid name comes back as captured stderr rather than a half-torn-down
-# terminal, keeping the re-prompt in a clean terminal. The settled name is
-# saved to the workspace so later runs can reuse it. Steps:
+# Creation and entry are one step: a session created with `--create-background`
+# comes up with its first pane never started, so the client lands on the status
+# bar plugin and the tab has to be closed by hand (zellij 0.45). The settled name
+# is saved to the workspace so later runs can reuse it. Steps:
 #   1. With --prompt, prompt for a name up front, prefilled with `session`
 #      (Enter accepts it).
 #   2. If we're already in that session, there's nothing to do.
-#   3. If the session already exists, attach to it.
-#   4. Otherwise create it detached; on success, attach.
-#   5. On failure, print the literal stderr + exit code (red), prompt for a
-#      different name (no prefill), and go to 2. Empty input cancels.
-#
-# Final step uses `switch-session` when already in a session (a plain attach
-# stalls when nested), else `attach`.
+#   3. Otherwise enter it, creating it when it does not exist yet.
+#   4. If zellij rejects the name it prints its own reason; prompt for a
+#      different name (no prefill) and go to 2. Empty input cancels.
 export def zellij-attach [
   dir: path        # Workspace directory to launch from
   session: string  # Session name (a saved name, or the workspace name on a first run)
@@ -324,28 +320,40 @@ export def zellij-attach [
     let named = (prompt-session-name "Name the Zellij session:" --default $session)
     $session = (if ($named | is-empty) { $session } else { $named })
   }
+  # Entry blocks until detach, so the name is saved first and put back on a
+  # rejection.
+  let previous = (read-session-name $dir)
   loop {
     if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
       print $"Already in Zellij session '($session)'."
       save-session-name $dir $session
       return
     }
-    if (zellij-session-exists $session) { break }
-    # `--` so a name beginning with `-` is taken as the session, not a flag.
-    let result = (^zellij attach --create-background -- $session | complete)
-    if $result.exit_code == 0 { break }
-    print $"(ansi red)($result.stderr)(ansi reset)"
-    print $"(ansi red)exit code: ($result.exit_code)(ansi reset)"
+    save-session-name $dir $session
+    try {
+      zellij-enter $dir $session
+      return
+    }
+    if $previous == null { remove-session-name $dir } else { save-session-name $dir $previous }
     let next = (prompt-session-name "Zellij couldn't create that session. Enter a different name:")
     if ($next | is-empty) { print "Cancelled."; return }
     $session = $next
   }
-  save-session-name $dir $session
-  # Nested `attach` stalls; switch instead when already in a session.
+}
+
+# Enter a Zellij session, creating it when it does not exist yet.
+#
+# Nested `attach` stalls, so switch instead when already in a session;
+# `switch-session` creates the session too when the name is unknown. `--` so a
+# name beginning with `-` is taken as the session, not a flag.
+def zellij-enter [
+  dir: path        # Working directory for a session being created
+  session: string  # Session name
+]: nothing -> nothing {
   if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
-    ^zellij action switch-session -- $session
+    ^zellij action switch-session --cwd $dir -- $session
   } else {
-    ^zellij attach -- $session
+    ^zellij attach --create -- $session
   }
 }
 
