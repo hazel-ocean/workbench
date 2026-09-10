@@ -1,9 +1,12 @@
 # Workspace utility commands.
 #
-# `workspace/mod.nu` pulls these in with `use util.nu *`. Because that is a plain
+# Each command file pulls these in with `use $UTIL *`. Because that is a plain
 # `use` (not `export use`), they stay internal to the workspace module and out
-# of the public `workspace` overlay: the user-facing command surface lives in
-# workspace/mod.nu.
+# of the public `workspace` overlay: the user-facing command surface is one
+# command per file under workspace/.
+#
+# The `$UTIL` const those files hold is built from `path self`, so this file
+# resolves from the command file's own location rather than the caller's cwd.
 
 # The meta workspace's name: the workbench repo root's basename.
 export def workspace-home []: nothing -> string {
@@ -117,6 +120,176 @@ export def save-session-name [dir: path, name: string]: nothing -> nothing {
 export def remove-session-name [dir: path]: nothing -> nothing {
   let file = ($dir | path join $ZELLIJ_SESSION_FILE)
   if ($file | path exists) { rm --force $file }
+}
+
+# Basename prefix of a workspace's metadata file, at the workspace root. The
+# extension names the format: `.workspace.meta.yaml`, `.workspace.meta.toml`,
+# and so on.
+const METADATA_PREFIX = ".workspace.meta."
+
+# Path of a workspace's metadata file, or null when there is none.
+#
+# The name is matched case-insensitively, extension included, since `open`
+# lowercases an extension before inferring a parser from it.
+#
+# The extension is not constrained, so more than one candidate can exist. That
+# is ambiguous: the first by name wins and the rest are named in a warning.
+export def metadata-file [dir: path]: nothing -> oneof<path, nothing> {
+  if not ($dir | path exists) { return null }
+  let found = (ls --all $dir
+    | where type == file
+    | get name
+    | where {|f| $f | path basename | str starts-with --ignore-case $METADATA_PREFIX }
+    | sort --ignore-case)
+  if ($found | is-empty) { return null }
+  if ($found | length) > 1 {
+    let ignored = ($found | skip 1 | each {|f| $f | path basename } | str join ", ")
+    print $"(ansi yellow)multiple ($METADATA_PREFIX)* files; ignoring ($ignored)(ansi reset)"
+  }
+  $found | first
+}
+
+# A workspace's metadata: its `.workspace.meta.<format>` file parsed by format,
+# or null when the workspace has no such file.
+#
+# The extension selects the parser, so any format with a `from <ext>` command
+# (json, yaml, toml, nuon, csv, ...) yields structured data. Anything else, and
+# any file that fails to parse, comes back as raw text. Reading is best-effort:
+# a broken file is a warning, not an error, so `workspace info` still answers.
+export def workspace-metadata [dir: path]: nothing -> any {
+  let file = (metadata-file $dir)
+  if $file == null { return null }
+  let name = ($file | path basename)
+  # `open` lowercases the extension to infer a parser, so the check for one has
+  # to lower it too: `from YAML` is not a command, but `open x.YAML` parses.
+  let ext = ($file | path parse | get extension | str lowercase)
+  # `open` infers the parser from the extension. It only has one to infer when a
+  # matching `from` command exists; without one it hands back bytes, so read the
+  # file as text instead.
+  if (which $"from ($ext)" | is-empty) {
+    return (read-text $file $name)
+  }
+  try {
+    open $file
+  } catch {|e|
+    print $"(ansi yellow)could not parse ($name) as ($ext): ($e.msg)(ansi reset)"
+    read-text $file $name
+  }
+}
+
+# Path a new metadata file is created at.
+#
+# YAML because it needs the least quoting for what these files mostly hold: a
+# bare URI is a valid scalar, so only the markdown link form takes quotes.
+# `.yaml` over `.yml`: both parse, and it is what yaml.org itself recommends.
+export def metadata-new-file [dir: path]: nothing -> path {
+  $dir | path join $"($METADATA_PREFIX)yaml"
+}
+
+# Seed contents for a new metadata file: comments only, so an untouched file
+# parses as no metadata rather than as keys nobody meant to set.
+export def metadata-template [name: string]: nothing -> string {
+  ([
+    $"# Metadata for the ($name) workspace, reported by `workspace info`."
+    "#"
+    "# The keys are yours. One ending in -link, -url or -uri is rendered as a"
+    "# clickable link, written either bare or as markdown: [label](uri)"
+    ""
+    "# ticket-url: https://example.com/issue/ABC-123"
+    '# notes-link: "[Design notes](obsidian://open?vault=Notes&file=Projects/x)"'
+    "# task-link: things:///show?id=ABC123"
+    ""
+  ] | str join (char newline))
+}
+
+# Open a file in the user's editor, blocking until the editor exits.
+#
+# $EDITOR wins over $VISUAL. The value is split on whitespace, so a setting that
+# carries flags (`code -w`) runs as intended rather than as one odd filename.
+export def open-in-editor [file: path]: nothing -> nothing {
+  let editor = ([($env.EDITOR? | default ""), ($env.VISUAL? | default "")]
+    | each {|candidate| $candidate | str trim }
+    | where {|candidate| $candidate | is-not-empty }
+    | get 0?)
+  if $editor == null {
+    error make --unspanned {
+      msg: "No editor configured."
+      code: "workspace::no_editor"
+      help: "Set $env.EDITOR (or $env.VISUAL) to the editor to open files with."
+    }
+  }
+  let parts = ($editor | split row --regex '\s+')
+  let command = ($parts | first)
+  assert-tool $command "open a file in your editor"
+  ^$command ...($parts | skip 1) $file
+}
+
+# Metadata key suffixes marking a value as something to link to.
+const LINK_SUFFIXES = ["link", "url", "uri"]
+
+# True when a metadata key names a link: `url`, `things-link`, `obsidian-uri`.
+def link-key [key: string]: nothing -> bool {
+  let lowered = ($key | str lowercase)
+  $LINK_SUFFIXES | any {|suffix|
+    ($lowered == $suffix) or ($lowered | str ends-with $"-($suffix)")
+  }
+}
+
+# One link-named value as a hyperlink, in either of two forms:
+#
+#   https://example.com          the URI is its own label
+#   [some text](https://…)       markdown: `some text` is the label
+#
+# A label hides the URI it points at, so it is painted blue to read as a link,
+# the same blue an open PR gets. A bare URI already looks like one, so it is
+# left unpainted. A markdown form with an empty label falls back to the URI.
+def link-value [value: string]: nothing -> string {
+  let md = ($value
+    | str trim
+    | parse --regex '^\[(?<label>[^\]]*)\]\((?<uri>[^\s)]+)\)$')
+  if ($md | is-empty) { return ($value | ansi link) }
+  let link = ($md | first)
+  if ($link.label | str trim | is-empty) {
+    return ($link.uri | ansi link)
+  }
+  $link.uri | ansi link --text $"(ansi blue)($link.label)(ansi reset)"
+}
+
+# Wrap the string values of link-named keys in terminal hyperlinks, at any depth.
+#
+# A terminal auto-detects only the schemes on its own allowlist, so `things:///`
+# and `obsidian://` are never clickable as plain text however they are written.
+# An explicit OSC 8 hyperlink skips that matcher, and the terminal hands the URI
+# to the system handler on a click.
+#
+# The key decides, not the value: nothing checks that a link-named value is a
+# URI, so a value that is not one gets wrapped too and does nothing when clicked.
+# `key` is the key the value was found under, and is null at the top level.
+# See `link-value` for the two value forms.
+export def linkify [value: any, key?: string]: nothing -> any {
+  match ($value | describe --detailed | get type) {
+    "record" => (
+      $value
+      | transpose k v
+      # `merge` over `insert` so a key containing dots stays one flat key
+      # instead of being read as a path into a nested record.
+      | reduce --fold {} {|pair, acc| $acc | merge { ($pair.k): (linkify $pair.v $pair.k) } }
+    )
+    # A list inherits its key, so every entry under `notes-url` is a link.
+    "list" => ($value | each {|item| linkify $item $key })
+    "string" => (if ($key != null) and (link-key $key) { link-value $value } else { $value })
+    _ => $value
+  }
+}
+
+# A metadata file's contents as trimmed text, or null when it cannot be read.
+def read-text [file: path, name: string]: nothing -> oneof<string, nothing> {
+  try {
+    open --raw $file | decode utf-8 | str trim
+  } catch {|e|
+    print $"(ansi yellow)could not read ($name): ($e.msg)(ansi reset)"
+    null
+  }
 }
 
 # Rewrite the Zellij session name in clawd-back's per-session state files after a
@@ -391,6 +564,26 @@ export def try-infer-workspace []: nothing -> oneof<string, nothing> {
     return (workspace-home)
   }
   null
+}
+
+# cd back into `dir` if it still exists, after a bare `cd` has restored a good cwd.
+#
+# A blocking `zellij` attach can return into a directory that a `workspace
+# delete` removed in the meantime. Nushell then refuses to run any command but
+# `cd` while `$env.PWD` is gone, so every caller does the recovery itself, in
+# this exact order:
+#
+#   let root = (workspace-dir (workspace-home))   # before blocking; a call now still works
+#   let origin = $env.PWD
+#   zellij-attach $dir $session                   # blocks; $origin may vanish
+#   cd $root                                      # bare cd with a captured path: the only
+#   restore-cwd $origin                           # thing that runs when cwd is gone
+#
+# The workbench root is never a delete target, so `cd $root` always lands.
+export def --env restore-cwd [dir: path]: nothing -> nothing {
+  if ($dir | path exists) {
+    cd $dir
+  }
 }
 
 # List the git repos in a workspace. Normal workspaces contain a repo per

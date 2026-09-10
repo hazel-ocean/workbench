@@ -36,6 +36,8 @@ workspace delete sms                                 # permanently remove (fuzzy
 workspace trash sms                                  # same, but route through the system trash (recoverable)
 workspace zellij attach                              # attach to / create a zellij session for the workspace
 workspace list                                       # all workspaces, with each repo's branch + status
+workspace info                                       # one workspace: session, repos, metadata
+workspace metadata                                   # edit this workspace's metadata in $EDITOR
 workspace root                                       # workspaces root path
 ```
 
@@ -51,6 +53,56 @@ workspace diff --cached          # shorthand for `in-each {|| git diff ...}`
 
 Most commands default to the current workspace (inferred from `$env.PWD`).
 Pass `--choose` (`-c`) to pick a different one from a list instead.
+
+## Workspace metadata
+
+A `.workspace.meta.<format>` file at a workspace root holds whatever context
+the repos cannot show: the ticket, the thread, the notes. `workspace info`
+reports it as `metadata`.
+
+`workspace metadata` opens that file in `$EDITOR` (falling back to `$VISUAL`),
+seeding a commented `.workspace.meta.yaml` when the workspace has none. An
+untouched seed is all comments, so it parses as no metadata until you fill in.
+
+```yaml
+# workspaces/ENG-123/.workspace.meta.yaml
+linear-url: https://linear.app/onesignal/issue/ENG-123
+things-link: things:///show?id=ABC123
+obsidian-link: "[SMS module notes](obsidian://open?vault=OneSignal&file=Projects/sms-module)"
+slack-url: "[Rollout thread](https://onesignal.slack.com/archives/C0123/p1700000000)"
+```
+
+The extension picks the parser, so any format Nushell's `open` infers works:
+`.yaml`, `.yml`, `.toml`, `.json`, `.nuon`. The whole name is matched
+case-insensitively, extension included.
+
+```nu
+workspace info | get metadata.linear-url
+workspace info -c | get metadata | transpose key value
+```
+
+The keys are yours; nothing validates them. A format Nushell cannot parse
+reads as text. A workspace with no metadata gets no `metadata` field at all,
+so use `get metadata?` when a workspace may not have one.
+
+### Links
+
+A key ending in `-link`, `-url` or `-uri`, or named just `link`/`url`/`uri`, is
+rendered as a clickable hyperlink, at any depth and through lists. Two forms:
+
+|Value                   |Shows      |
+|------------------------|-----------|
+|`https://example.com`   |the URI    |
+|`[some text](https://…)`|`some text`|
+
+A labelled link is painted blue, since the label hides where it points; a bare
+URI is left plain. The key is the opt-in, so `slack-thread` stays text while
+`slack-url` becomes a link, and nothing checks that the value is really a URI.
+
+This exists because terminals auto-detect only the schemes on their own
+allowlist. Ghostty's list has no `things:` or `obsidian:`, so those are never
+clickable as plain text; an explicit hyperlink skips that matcher and the URI
+goes to the system handler on a click.
 
 ## Configuration
 
