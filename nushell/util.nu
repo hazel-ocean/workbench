@@ -517,8 +517,10 @@ export def zellij-attach [
 # Enter a Zellij session, creating it when it does not exist yet.
 #
 # Nested `attach` stalls, so switch instead when already in a session;
-# `switch-session` creates the session too when the name is unknown. `--` so a
-# name beginning with `-` is taken as the session, not a flag.
+# `switch-session` creates the session too when the name is unknown.
+#
+# `attach` takes no `--`: it separates the session name from an initial command,
+# so the name lands as the command and zellij reports no session given.
 def zellij-enter [
   dir: path        # Working directory for a session being created
   session: string  # Session name
@@ -526,7 +528,7 @@ def zellij-enter [
   if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
     ^zellij action switch-session --cwd $dir -- $session
   } else {
-    ^zellij attach --create -- $session
+    ^zellij attach --create $session
   }
 }
 
@@ -544,7 +546,7 @@ export def zellij-attach-existing [session: string]: nothing -> nothing {
   if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
     ^zellij action switch-session -- $session
   } else {
-    ^zellij attach -- $session
+    ^zellij attach $session
   }
 }
 
