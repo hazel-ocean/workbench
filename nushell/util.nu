@@ -886,8 +886,7 @@ def checks-state [rollup: list]: nothing -> oneof<string, nothing> {
   }
 }
 
-# What a PR waits on: a label, the color to paint it, and the path under the PR
-# URL where that gate is acted on, so the label opens the tab that shows it.
+# What a PR waits on, as a label and the color to paint it.
 #
 # The gates are ranked, and only the first one reports: a PR that is approved
 # but failing its checks reads as failing, because that is what has to change
@@ -896,27 +895,23 @@ def pr-tag [pr: record]: nothing -> record {
   let checks = (checks-state ($pr.statusCheckRollup? | default []))
   let review = ($pr.reviewDecision? | default "")
   match $pr {
-    _ if $pr.state == "MERGED" => { label: "merged", paint: (ansi purple), path: "" }
-    _ if $pr.state == "CLOSED" => { label: "closed", paint: (ansi red), path: "" }
-    _ if $pr.isDraft => { label: "draft", paint: (ansi dark_gray), path: "" }
-    _ if $review == "CHANGES_REQUESTED" => { label: "changes requested", paint: (ansi red), path: "/files" }
-    _ if $checks == "failing" => { label: "checks failing", paint: (ansi red), path: "/checks" }
-    _ if $pr.mergeable? == "CONFLICTING" => { label: "conflicts", paint: (ansi red), path: "" }
-    _ if $checks == "pending" => { label: "checks running", paint: (ansi yellow), path: "/checks" }
-    _ if $review == "APPROVED" => { label: "approved", paint: (ansi green), path: "/files" }
-    _ => { label: "in review", paint: (ansi blue), path: "/files" }
+    _ if $pr.state == "MERGED" => { label: "merged", paint: (ansi purple) }
+    _ if $pr.state == "CLOSED" => { label: "closed", paint: (ansi red) }
+    _ if $pr.isDraft => { label: "draft", paint: (ansi dark_gray) }
+    _ if $review == "CHANGES_REQUESTED" => { label: "changes requested", paint: (ansi red) }
+    _ if $checks == "failing" => { label: "checks failing", paint: (ansi red) }
+    _ if $pr.mergeable? == "CONFLICTING" => { label: "conflicts", paint: (ansi red) }
+    _ if $checks == "pending" => { label: "checks running", paint: (ansi yellow) }
+    _ if $review == "APPROVED" => { label: "approved", paint: (ansi green) }
+    _ => { label: "in review", paint: (ansi blue) }
   }
 }
 
-# A PR as a clickable `#<number>` followed by what it waits on, both in the
-# tag's color. The number opens the PR; the label opens the tab that gate lives
-# on, so a failing check is one click from its log.
+# A PR as one clickable `#<number> <what it waits on>`, in the tag's color.
 def pr-link [pr: oneof<record, nothing>]: nothing -> any {
   if $pr == null { return null }
   let tag = (pr-tag $pr)
-  let number = ($pr.url | ansi link --text $"#($pr.number)")
-  let label = ($"($pr.url)($tag.path)" | ansi link --text $tag.label)
-  $"($tag.paint)($number) ($label)(ansi reset)"
+  $pr.url | ansi link --text $"($tag.paint)#($pr.number) ($tag.label)(ansi reset)"
 }
 
 # How the branch stands against its upstream:
