@@ -916,25 +916,34 @@ def pr-link [pr: oneof<record, nothing>]: nothing -> any {
   $"($tag.paint)($link) ($tag.label)(ansi reset)"
 }
 
-# Whether the branch has an upstream at all: "unpushed" when none is
-# configured, "gone" when one is but its remote-tracking branch is deleted,
-# "tracked" otherwise.
+# How the branch stands against its upstream:
 #
-# Ahead, behind and detachment already have their own columns, so they are not
-# states here: only the two the rest of the row cannot show are.
+#   synced        even with the upstream, as of the last fetch
+#   out-of-sync   ahead of it, behind it, or both
+#   unpushed      no upstream is configured: the branch lives only here
+#   gone          one is configured, but its remote-tracking branch is deleted
+#
+# Which side a branch is out of sync on has its own columns, so it is one state
+# here, not three. A detached HEAD reports synced: the name already says it.
 def upstream-state [repo: path, branch: string, divergence: record]: nothing -> string {
-  if ($branch | is-empty) or ($divergence.ahead != null) {
-    return "tracked"
+  if $divergence.ahead != null {
+    return (if ($divergence.ahead > 0) or ($divergence.behind > 0) {
+      "out-of-sync"
+    } else {
+      "synced"
+    })
   }
+  if ($branch | is-empty) { return "synced" }
   # Divergence is null either way, so the config is what separates a branch that
   # was never pushed from one whose remote branch was deleted under it.
   let configured = (^git -C $repo config --get $"branch.($branch).remote" | complete)
   if $configured.exit_code == 0 { "gone" } else { "unpushed" }
 }
 
-# The branch name, marked when it has no upstream to track.
+# The branch name, marked by how it stands against its upstream.
 def mark-branch [branch: string, state: string]: nothing -> string {
   match $state {
+    "out-of-sync" => $"(ansi yellow)($branch)(ansi reset)"
     "unpushed" => $"(ansi dark_gray)($branch)(ansi reset)"
     "gone" => $"(ansi attr_strike)(ansi red)($branch)(ansi reset)"
     _ => $branch
