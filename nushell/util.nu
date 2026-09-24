@@ -903,7 +903,7 @@ def pr-tag [pr: record]: nothing -> record {
     _ if $pr.mergeable? == "CONFLICTING" => { label: "conflicts", paint: (ansi red) }
     _ if $checks == "pending" => { label: "checks running", paint: (ansi yellow) }
     _ if $review == "APPROVED" => { label: "approved", paint: (ansi green) }
-    _ => { label: "ready for review", paint: (ansi blue) }
+    _ => { label: "in review", paint: (ansi blue) }
   }
 }
 
