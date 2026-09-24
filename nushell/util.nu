@@ -835,40 +835,108 @@ def upstream-divergence [repo: path]: nothing -> record {
   { ahead: ($pair | get 1 | into int), behind: ($pair | get 0 | into int) }
 }
 
-# The PR for a repo's current branch as `{ number, url, state, isDraft }`, or
-# null when there is no PR. A draft reports state OPEN, so its own field has to
-# come along. Skipped without an upstream: an unpushed branch cannot have a PR,
-# and `gh` costs a network round trip per repo.
+# Fields fetched for a PR. A draft reports state OPEN, and an approval says
+# nothing about the checks, so every gate the `pr` cell reports needs its own
+# field.
+const PR_FIELDS = "number,url,state,isDraft,reviewDecision,mergeable,statusCheckRollup"
+
+# The PR for a repo's current branch, or null when there is no PR. Skipped
+# without an upstream: an unpushed branch cannot have a PR, and `gh` costs a
+# network round trip per repo.
 def branch-pr [repo: path, upstream: bool]: nothing -> oneof<record, nothing> {
   if (not $upstream) or (not (tool-installed "gh")) {
     return null
   }
-  let out = (do { cd $repo; ^gh pr view --json number,url,state,isDraft } | complete)
+  let out = (do { cd $repo; ^gh pr view --json $PR_FIELDS } | complete)
   if $out.exit_code != 0 {
     return null
   }
   $out.stdout | from json
 }
 
-# A PR as a clickable `#<number>`: blue when open, yellow while a draft, struck
-# through once it is no longer open.
-def pr-link [pr: oneof<record, nothing>]: nothing -> any {
-  if $pr == null { return null }
-  let paint = match $pr.state {
-    "MERGED" => $"(ansi attr_strike)(ansi purple)"
-    "CLOSED" => $"(ansi attr_strike)(ansi red)"
-    _ => (if $pr.isDraft { (ansi yellow) } else { (ansi blue) })
+# One rollup entry's verdict: "failing", "pending" or "passing".
+#
+# An entry is either a check run, which carries `conclusion` once it finishes
+# and `status` before that, or a commit status, which carries `state`.
+def check-verdict [entry: record]: nothing -> string {
+  let conclusion = ($entry.conclusion? | default "")
+  if ($conclusion | is-not-empty) {
+    return (match $conclusion {
+      "SUCCESS" | "NEUTRAL" | "SKIPPED" => "passing"
+      "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED" | "STARTUP_FAILURE" => "failing"
+      _ => "pending"
+    })
   }
-  $pr.url | ansi link --text $"($paint)#($pr.number)(ansi reset)"
+  match ($entry.state? | default "") {
+    "SUCCESS" => "passing"
+    "FAILURE" | "ERROR" => "failing"
+    _ => "pending"
+  }
 }
 
-# The branch name, marked by the fate of its PR: a check once merged, struck
-# through once closed unmerged. An open PR, or no PR, leaves the name plain.
-def mark-branch [branch: string, pr: oneof<record, nothing>]: nothing -> string {
-  if $pr == null { return $branch }
-  match $pr.state {
-    "MERGED" => $"($branch) (ansi green)✓(ansi reset)"
-    "CLOSED" => $"(ansi attr_strike)($branch)(ansi reset)"
+# The combined verdict of a PR's checks, or null when it has none. One failure
+# outweighs anything still running.
+def checks-state [rollup: list]: nothing -> oneof<string, nothing> {
+  if ($rollup | is-empty) { return null }
+  let verdicts = ($rollup | each {|entry| check-verdict $entry })
+  match $verdicts {
+    _ if "failing" in $verdicts => "failing"
+    _ if "pending" in $verdicts => "pending"
+    _ => "passing"
+  }
+}
+
+# What a PR waits on, as a label and the color to paint it.
+#
+# The gates are ranked, and only the first one reports: a PR that is approved
+# but failing its checks reads as failing, because that is what has to change
+# before it merges.
+def pr-tag [pr: record]: nothing -> record {
+  let checks = (checks-state ($pr.statusCheckRollup? | default []))
+  let review = ($pr.reviewDecision? | default "")
+  match $pr {
+    _ if $pr.state == "MERGED" => { label: "merged", paint: (ansi purple) }
+    _ if $pr.state == "CLOSED" => { label: "closed", paint: (ansi red) }
+    _ if $pr.isDraft => { label: "draft", paint: (ansi dark_gray) }
+    _ if $review == "CHANGES_REQUESTED" => { label: "changes requested", paint: (ansi red) }
+    _ if $checks == "failing" => { label: "checks failing", paint: (ansi red) }
+    _ if $pr.mergeable? == "CONFLICTING" => { label: "conflicts", paint: (ansi red) }
+    _ if $checks == "pending" => { label: "checks running", paint: (ansi yellow) }
+    _ if $review == "APPROVED" => { label: "approved", paint: (ansi green) }
+    _ => { label: "ready for review", paint: (ansi blue) }
+  }
+}
+
+# A PR as a clickable `#<number>` followed by what it waits on, both in the
+# tag's color.
+def pr-link [pr: oneof<record, nothing>]: nothing -> any {
+  if $pr == null { return null }
+  let tag = (pr-tag $pr)
+  let link = ($pr.url | ansi link --text $"#($pr.number)")
+  $"($tag.paint)($link) ($tag.label)(ansi reset)"
+}
+
+# Whether the branch has an upstream at all: "unpushed" when none is
+# configured, "gone" when one is but its remote-tracking branch is deleted,
+# "tracked" otherwise.
+#
+# Ahead, behind and detachment already have their own columns, so they are not
+# states here: only the two the rest of the row cannot show are.
+def upstream-state [repo: path, branch: string, divergence: record]: nothing -> string {
+  if ($branch | is-empty) or ($divergence.ahead != null) {
+    return "tracked"
+  }
+  # Divergence is null either way, so the config is what separates a branch that
+  # was never pushed from one whose remote branch was deleted under it.
+  let configured = (^git -C $repo config --get $"branch.($branch).remote" | complete)
+  if $configured.exit_code == 0 { "gone" } else { "unpushed" }
+}
+
+# The branch name, marked when it has no upstream to track.
+def mark-branch [branch: string, state: string]: nothing -> string {
+  match $state {
+    "unpushed" => $"(ansi dark_gray)($branch)(ansi reset)"
+    "gone" => $"(ansi attr_strike)(ansi red)($branch)(ansi reset)"
     _ => $branch
   }
 }
@@ -890,7 +958,7 @@ export def repo-summary [repo: path]: nothing -> record {
   let pr = (branch-pr $repo ($divergence.ahead != null))
   {
     name: ($repo | path basename)
-    branch: (mark-branch $branch $pr)
+    branch: (mark-branch $branch (upstream-state $repo $current $divergence))
     status: (if ($porcelain | str trim | is-empty) { "clean" } else { "dirty" })
     ...$divergence
     pr: (pr-link $pr)
