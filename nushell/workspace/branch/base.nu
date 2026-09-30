@@ -38,7 +38,7 @@ export def main [
       help: "A branch records that base; --repair rebuilds every record from open PRs."
     }
   }
-  let repos = (target-repos $choose $repo)
+  let repos = (target-repos $choose $repo "acting on")
   $repos | par-each --keep-order {|repo|
     if $repair {
       repair-repo $repo
