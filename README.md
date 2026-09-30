@@ -39,6 +39,7 @@ workspace list                                       # all workspaces, with each
 workspace info                                       # one workspace: session, repos, metadata
 workspace metadata                                   # edit this workspace's metadata in $EDITOR
 workspace root                                       # workspaces root path
+workspace secrets copy                               # copy gitignored files in from secrets/
 ```
 
 Run a closure in every repo of the current workspace (cwd = repo, returns a
@@ -104,12 +105,43 @@ allowlist. Ghostty's list has no `things:` or `obsidian:`, so those are never
 clickable as plain text; an explicit hyperlink skips that matcher and the URI
 goes to the system handler on a click.
 
+## Secrets
+
+`secrets/` at the workbench root holds gitignored files for cloned repos:
+`.env` variants, keys, certificates. Git ignores the directory itself.
+
+```
+secrets/acme/api-service/.env.staging          →  api-service/.env.staging
+secrets/acme/api-service/extra/key.pem         →  api-service/extra/key.pem
+```
+
+The first two levels are the GitHub org and repo, matched against the clone's
+`origin` without regard to case. A clone in a renamed directory still finds its
+files. The rest of the path is where the file lands in the repo.
+
+`workspace secrets copy` lists the files for every repo in the workspace, or
+for one with `--repo`. For each file you pick, it prints the destination
+directory and asks for a name. Enter keeps the name. Type a new one to rename
+the file, as when `.env.staging` should land as `.env`. The copy is verbatim,
+file mode included.
+
+- A destination git tracks is never replaced.
+- A destination that is not gitignored asks first, since git would offer to
+  commit it.
+- An existing file that differs asks before it is overwritten. An identical
+  one is reported `unchanged`.
+
+`workspace clone` shows the same picker after each clone that has files in the
+store. Press Esc to skip it. It does not appear when stdin is no terminal, so a
+scripted clone never blocks.
+
 ## Configuration
 
 |Env var                        |Default        |Purpose                         |
 |-------------------------------|---------------|--------------------------------|
 |`WORKBENCH_WORKSPACES_ROOT`    |`./workspaces/`|Where workspaces live           |
 |`WORKBENCH_DEFAULT_GITHUB_ORG` |unset          |Org prepended to bare repo names|
+|`WORKBENCH_SECRETS_ROOT`       |`./secrets/`   |Where `workspace secrets` reads |
 
 Loading the overlay sources `.env` from the repo root, which is untracked and
 machine-local. Copy the example and edit it (`cp .env.example .env`) so bare

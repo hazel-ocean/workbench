@@ -1,5 +1,6 @@
 workspaces/*
 !workspaces/.keep
+/secrets/
 .zellij_session
 .env
 

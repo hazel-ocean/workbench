@@ -1,5 +1,6 @@
 const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
+use secrets/shared.nu *
 
 # Clone repos into a workspace via `gh` (defaults to the current workspace)
 #
@@ -10,6 +11,9 @@ use $UTIL *
 #
 # Clones are shallow and blobless by default: the last 90 days of history, and
 # file contents only for what's checked out. Pass --full for a complete clone.
+#
+# When the secrets store holds files for a repo, a picker offers to copy them in
+# once the clone is checked out. See `workspace secrets copy`.
 #
 #   workspace clone web-app
 #   workspace clone other-org/web-app
@@ -63,6 +67,7 @@ export def main [
     if $parsed.ref != null {
       checkout-ref $target $parsed.ref
     }
+    offer-secrets $target
   }
 }
 
