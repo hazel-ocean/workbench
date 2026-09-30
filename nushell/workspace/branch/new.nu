@@ -34,7 +34,7 @@ export def main [
       help: "Git rejects spaces, a leading dash, and `..`. See `git help check-ref-format`."
     }
   }
-  let checked = (target-repos $choose $repo | par-each --keep-order {|r|
+  let checked = (target-repos $choose $repo "branching" | par-each --keep-order {|r|
     {
       repo: $r
       name: ($r | path basename)
