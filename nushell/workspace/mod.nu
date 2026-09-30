@@ -31,3 +31,4 @@ export use diff.nu *
 export use in-each.nu *
 export use zellij
 export use branch
+export use secrets

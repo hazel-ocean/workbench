@@ -37,6 +37,9 @@ export-env {
   $env.WORKBENCH_WORKSPACES_ROOT = $env.WORKBENCH_WORKSPACES_ROOT? | default (
     $DIR_SELF | path join "workspaces"
   )
+  $env.WORKBENCH_SECRETS_ROOT = $env.WORKBENCH_SECRETS_ROOT? | default (
+    $DIR_SELF | path join "secrets"
+  )
   $env.WORKBENCH_DEFAULT_GITHUB_ORG = $env.WORKBENCH_DEFAULT_GITHUB_ORG? | default null
 }
 
