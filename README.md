@@ -35,7 +35,7 @@ workspace attach api                                 # cd into a workspace (name
 workspace delete api                                 # permanently remove (fuzzy multi-select + contents preview + confirm)
 workspace trash api                                  # same, but route through the system trash (recoverable)
 workspace zellij attach                              # attach to / create a zellij session for the workspace
-workspace list                                       # all workspaces, with each repo's branch + status
+workspace list                                       # all workspaces, with zellij session + metadata
 workspace info                                       # one workspace: session, repos, metadata
 workspace metadata                                   # edit this workspace's metadata in $EDITOR
 workspace root                                       # workspaces root path
