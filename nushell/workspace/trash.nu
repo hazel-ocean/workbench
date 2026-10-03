@@ -2,10 +2,6 @@ use remove.nu *
 
 # Move workspaces to the system trash (recoverable)
 #
-# Like `workspace delete`, but routes through the OS trash so the directories
-# can be restored later. Selection, contents preview, and --force behave the
-# same as `delete`.
-#
 #   workspace trash ENG-123           # exact
 #   workspace trash sms               # substring; multi-select if ambiguous
 #   workspace trash                   # pick from all

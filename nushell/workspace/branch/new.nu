@@ -5,15 +5,11 @@ use shared.nu *
 
 # Create a branch in each repo, recording the branch it was cut from
 #
-# The branch you are on becomes the new branch's base, and its tip becomes the
-# recorded base sha. Creation is the only moment the base is known for certain,
-# which is the point of using this over `git checkout -b`: everything later has
-# to infer it.
+# Creation is the only moment the base is known for certain. Later, it has to
+# be inferred.
 #
-# Stack a branch by cutting it from the one below:
-#
-# Nothing is created unless every target repo can take the branch, so a
-# workspace never ends up half-branched. --partial creates it where possible.
+# Nothing is created unless every repo can take the branch. --partial creates
+# it where possible.
 #
 #   workspace branch new eng-123-fix              # cut from main, in every repo
 #   workspace branch new eng-234-fix              # now cut from eng-123-fix
@@ -24,8 +20,6 @@ export def main [
   --repo (-r): string   # Act on this repo only, by directory name
   --partial             # Create it in the repos that can take it, skipping the rest
 ]: nothing -> table {
-  # Reject a malformed name before any repo is touched, so a typo cannot leave
-  # the workspace half-branched.
   let check = (^git check-ref-format --branch $name | complete)
   if $check.exit_code != 0 {
     error make --unspanned {
@@ -60,14 +54,12 @@ export def main [
   }
 }
 
-# Why `name` cannot be created in this repo, or null when it can.
 def creation-blocker [repo: path, name: string]: nothing -> oneof<string, nothing> {
   if (current-branch $repo) == null { return "detached HEAD" }
   if (local-branch-exists $repo $name) { return $"'($name)' already exists" }
   null
 }
 
-# Create `name` in one repo and record the branch it was cut from.
 def create-repo [repo: path, name: string]: nothing -> record {
   let repo_name = ($repo | path basename)
   let parent = (current-branch $repo)

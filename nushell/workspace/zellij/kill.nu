@@ -3,10 +3,6 @@ use $UTIL *
 
 # Kill a workspace's running Zellij session, leaving it resurrectable
 #
-# Tears down the running session but keeps both the resurrectable state and the
-# saved `.zellij_session` name, so `workspace zellij` can bring it back later.
-# Use `workspace zellij delete` instead to forget the name and drop the state.
-#
 #   workspace zellij kill        # current workspace
 #   workspace zellij kill -c     # pick one
 export def main [

@@ -1,16 +1,8 @@
 # Workspace removal, shared by `workspace delete` and `workspace trash`.
-#
-# Imported with a plain `use`, so it stays out of the public `workspace` overlay.
 
 const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
 
-# Shared implementation for `delete` / `trash`.
-#
-# Resolves targets via `select-workspaces` (which handles the picker, the
-# contents preview, and the confirmation when not forced), steps out of any
-# target the shell is sitting in, then removes each directory, via the system
-# trash when `trash` is set.
 export def --env remove-workspaces [
   force: bool           # Skip the confirmation prompt
   trash: bool           # Move to the system trash instead of deleting permanently
@@ -28,10 +20,7 @@ export def --env remove-workspaces [
     return
   }
 
-  # If the shell is sitting inside a target we'll actually remove, step back to
-  # the workbench root so we don't strand the session in a deleted directory: the
-  # workspaces root can itself be removed, the workbench root never is. The meta
-  # home is never removed, so it doesn't count as a target.
+  # Step out of a doomed directory. The workbench root is never removed.
   let removed = ($targets | where {|t| $t != (workspace-home)})
   let current = (try-infer-workspace)
   if $current != null and ($current in $removed) {
@@ -40,9 +29,8 @@ export def --env remove-workspaces [
 
   for name in $targets {
     let dir = (workspace-dir $name)
-    # Read the saved session before removing the dir; the file lives inside it.
+    # The file lives inside the directory about to go.
     let saved = (read-session-name $dir)
-    # The meta home's repo is never removed, only its session and saved name.
     if $name == (workspace-home) {
       remove-session-name $dir
       let note = if $saved != null {
@@ -62,8 +50,7 @@ export def --env remove-workspaces [
       rm --recursive --force $dir
       print $"(ansi red)deleted ($name)(ansi reset)"
     }
-    # `trash` leaves the session resurrectable to match the recoverable dir;
-    # `delete` removes it entirely.
+    # Trash keeps the session resurrectable, to match the recoverable directory.
     if $saved != null {
       if $trash { zellij-kill-session $saved } else { zellij-delete-session $saved }
     }

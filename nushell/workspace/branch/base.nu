@@ -5,21 +5,12 @@ use shared.nu *
 
 # Print, set, or repair the branch each repo's current branch is built on
 #
-# With no argument, reports what `workspace branch sync` would rebase onto, and
-# how it worked that out: `recorded` from git config, `pr` from the branch's
-# open PR, or `default` from the repo's default branch.
+# The report's `source` is where the base came from: `recorded` in git config,
+# `pr` from the open PR, or `default` from the repo default branch.
 #
-# With a branch name, records it as the base of each repo's current branch. The
-# branch must exist locally, since a base that cannot be checked out cannot be
-# rebased onto.
-#
-# With --repair, rebuilds records from open PRs, whose head and base pairs are
-# the edges of your stacks. Use it in a fresh clone, which starts with no
-# records. The base sha cannot be recovered from GitHub, so it seeds from the
-# merge base, which is correct until a parent is rebased.
-#
-# Every mode covers the whole workspace. Pass --repo to act on one, which is
-# what a workspace holding one stacked repo among several plain ones needs.
+# --repair rebuilds records from open PRs, as needed in a fresh clone. GitHub
+# does not keep the base sha, so it seeds from the merge base, which is correct
+# until a parent is rebased.
 #
 #   workspace branch base                        # what sync would use, and why
 #   workspace branch base parent-branch          # record it, in every repo
@@ -50,8 +41,6 @@ export def main [
   } | flatten
 }
 
-# A ref naming `base` in this repo: the local branch, else the remote-tracking
-# one, else null.
 def base-ref [repo: path, base: string]: nothing -> oneof<string, nothing> {
   if (local-branch-exists $repo $base) {
     $base
@@ -60,8 +49,6 @@ def base-ref [repo: path, base: string]: nothing -> oneof<string, nothing> {
   }
 }
 
-# Where `branch` and `base` last agreed, as a full sha, or null when they share
-# no history.
 def fork-sha [repo: path, branch: string, base: string]: nothing -> oneof<string, nothing> {
   let ref = (base-ref $repo $base)
   if $ref == null { return null }
@@ -70,7 +57,6 @@ def fork-sha [repo: path, branch: string, base: string]: nothing -> oneof<string
   $out.stdout | str trim
 }
 
-# One row per repo: the base its current branch resolves to, and the source.
 def report-repo [repo: path]: nothing -> record {
   let name = ($repo | path basename)
   let branch = (current-branch $repo)
@@ -92,7 +78,6 @@ def report-repo [repo: path]: nothing -> record {
   }
 }
 
-# Record `base` for the repo's current branch, or explain why it was not.
 def record-repo [repo: path, base: string]: nothing -> record {
   let name = ($repo | path basename)
   let branch = (current-branch $repo)
@@ -111,8 +96,6 @@ def record-repo [repo: path, base: string]: nothing -> record {
     }
     return ($row | merge { reason: $hint })
   }
-  # Replacing a different base rewrites a stack's shape, so say so rather than
-  # reporting it the same as a first-time record.
   let held = (branch-records $repo | where branch == $branch)
   let previous = if ($held | is-empty) { null } else { $held | first | get base }
   let sha = (^git -C $repo rev-parse $base | str trim)
@@ -128,11 +111,7 @@ def record-repo [repo: path, base: string]: nothing -> record {
   }
 }
 
-# Rebuild every branch's record in a repo from its open PRs.
-#
-# A branch whose record already points at a live local branch is left alone: it
-# is more precise than anything rebuildable, because its sha survived the
-# rebases the merge base cannot see.
+# A live record is kept: its sha survived rebases the merge base cannot see.
 def repair-repo [repo: path]: nothing -> table {
   let name = ($repo | path basename)
   let records = (branch-records $repo)

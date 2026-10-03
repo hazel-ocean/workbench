@@ -1,23 +1,16 @@
-# The secrets store and the copy flow, shared by `workspace secrets copy` and
-# the offer `workspace clone` makes after each clone.
-#
-# Imported with a plain `use`, so it stays out of the public `workspace` overlay.
+# Shared by `workspace secrets copy` and `workspace clone`.
 
 const UTIL = path self | path dirname | path dirname | path dirname | path join "util.nu"
 use $UTIL *
 
-# Finder litter that is never a secret.
 const IGNORED_NAMES = [".DS_Store"]
 
 export def secrets-root []: nothing -> path {
   $env.WORKBENCH_SECRETS_ROOT | path expand
 }
 
-# A repo's `{org, repo}` from its origin URL, or null when it has no origin in
-# that shape. Both `git@host:org/repo.git` and `https://host/org/repo` parse.
-#
-# The remote names the store's tree, not the directory, so a clone made with
-# `workspace clone web-app=alt` still finds `<org>/web-app`.
+# The origin remote, not the directory, names the store's tree, so a clone into
+# another directory still finds its files.
 export def repo-slug [repo: path]: nothing -> oneof<record, nothing> {
   let out = (^git -C $repo remote get-url origin | complete)
   if $out.exit_code != 0 { return null }
@@ -27,7 +20,7 @@ export def repo-slug [repo: path]: nothing -> oneof<record, nothing> {
   if ($hit | is-empty) { null } else { $hit | first }
 }
 
-# The subdirectory of `parent` named `name`, ignoring case as GitHub does.
+# Case-insensitive, as GitHub names are.
 def child-dir [parent: path, name: string]: nothing -> oneof<path, nothing> {
   if not ($parent | path exists) { return null }
   let wanted = ($name | str lowercase)
@@ -38,9 +31,6 @@ def child-dir [parent: path, name: string]: nothing -> oneof<path, nothing> {
   | get 0?
 }
 
-# Every file in a repo's tree in the store, as `{repo, source, rel}` rows, where
-# `rel` is both the path under the tree and the destination under the repo.
-# Empty when the store has no tree for the repo.
 export def secret-files [repo: path]: nothing -> table {
   let slug = (repo-slug $repo)
   if $slug == null { return [] }
@@ -53,9 +43,6 @@ export def secret-files [repo: path]: nothing -> table {
   | each {|f| { repo: $repo, source: $f, rel: ($f | path relative-to $tree) } }
 }
 
-# Pick files from `files`, name each, and copy it in. One row per pick, with
-# `action` one of copied, overwritten, unchanged or skipped. An empty pick
-# copies nothing and returns no rows.
 export def copy-secrets [files: table]: nothing -> table {
   let picked = ($files
     | input list --multi --fuzzy --display {|f| $"($f.repo | path basename)/($f.rel)" } "Secrets to copy:")
@@ -63,8 +50,7 @@ export def copy-secrets [files: table]: nothing -> table {
   $picked | each {|f| copy-one $f }
 }
 
-# The copy offer made after a clone: silent when the store holds nothing for the
-# repo, and when stdin is no terminal, so a scripted clone never blocks on it.
+# Silent without a terminal, so a scripted clone never blocks.
 export def offer-secrets [repo: path]: nothing -> nothing {
   if not (is-terminal --stdin) { return }
   let files = (secret-files $repo)
@@ -87,7 +73,6 @@ def copy-one [file: record]: nothing -> record {
     action: "skipped"
     reason: null
   }
-  # A tracked file is the repo's own; replacing it would show up as a change.
   if (tracked $file.repo $rel) {
     return ($row | update reason "tracked by git")
   }
@@ -111,8 +96,6 @@ def copy-one [file: record]: nothing -> record {
   $row | update action (if $exists { "overwritten" } else { "copied" })
 }
 
-# Ask for the name a file lands under. The directory is fixed by the file's
-# place in the store, so only the name is asked for; Enter keeps `default`.
 def prompt-file-name [
   source: path
   into: string   # Destination directory, relative to the workspace

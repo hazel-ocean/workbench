@@ -1,19 +1,11 @@
-# Workspace utility commands.
-#
-# Each command file pulls these in with `use $UTIL *`. Because that is a plain
-# `use` (not `export use`), they stay internal to the workspace module and out
-# of the public `workspace` overlay: the user-facing command surface is one
-# command per file under workspace/.
-#
-# The `$UTIL` const those files hold is built from `path self`, so this file
-# resolves from the command file's own location rather than the caller's cwd.
+# Helpers for the workspace commands. A plain `use` keeps them out of the
+# public `workspace` overlay.
 
 # The meta workspace's name: the workbench repo root's basename.
 export def workspace-home []: nothing -> string {
   $env.WORKBENCH_WORKSPACES_ROOT | path dirname | path basename
 }
 
-# Absolute dir for a workspace name; the meta home maps to the repo root.
 export def workspace-dir [name: string]: nothing -> path {
   if $name == (workspace-home) {
     $env.WORKBENCH_WORKSPACES_ROOT | path dirname
@@ -22,11 +14,7 @@ export def workspace-dir [name: string]: nothing -> path {
   }
 }
 
-# All workspace names, case-insensitive alphabetical, with the meta home folded
-# in among the immediate subdirs (excluding "_"-prefixed) rather than pinned first.
-#
-# Git can't track the empty workspaces root, so a fresh clone has none until the
-# first `workspace new`; a missing root means no workspaces, not an error.
+# Git can't track an empty directory, so a fresh clone has no workspaces root.
 export def workspace-names []: nothing -> list<string> {
   let subdirs = if ($env.WORKBENCH_WORKSPACES_ROOT | path exists) {
     ls $env.WORKBENCH_WORKSPACES_ROOT
@@ -40,16 +28,12 @@ export def workspace-names []: nothing -> list<string> {
   ([(workspace-home)] ++ $subdirs) | sort --ignore-case
 }
 
-# True when an external tool is on PATH.
-#
-# `complete` traps a non-zero exit but not a missing binary: nushell raises
-# before the pipeline runs, so every call that shells out to zellij or gh has to
-# ask this first.
+# `complete` traps a non-zero exit but not a missing binary, so check this
+# before shelling out.
 export def tool-installed [tool: string]: nothing -> bool {
   which $tool | is-not-empty
 }
 
-# Stop with a named error when a tool the command cannot work without is missing.
 export def assert-tool [tool: string, purpose: string]: nothing -> nothing {
   if not (tool-installed $tool) {
     error make --unspanned {
@@ -60,18 +44,12 @@ export def assert-tool [tool: string, purpose: string]: nothing -> nothing {
   }
 }
 
-# Width of the on-screen ruler guide in the session-name prompt. Zellij enforces
-# its own session-name rules; this only sizes the visual guide, never validates.
+# Only sizes the visual guide. Zellij enforces its own name rules.
 const ZELLIJ_RULER_WIDTH = 24
 
-# Filename, at a workspace root, storing that workspace's Zellij session name so
-# later runs reuse it without prompting.
 const ZELLIJ_SESSION_FILE = ".zellij_session"
 
-# Prompt for a Zellij session name, showing `message` and a width ruler as a
-# guide. With --default, the value is prefilled so Enter accepts it; without it,
-# empty input returns "" so the caller can treat that as cancel. Returns the
-# entered name, trimmed.
+# Without --default, empty input returns "", which callers treat as cancel.
 export def prompt-session-name [
   message: string
   --default (-d): string   # Prefill; Enter accepts it. Omitted → empty input = cancel.
@@ -93,17 +71,13 @@ export def prompt-session-name [
   $entered
 }
 
-# Yes/no confirmation defaulting to NO. Prints "<message> (y/N) > " and waits for
-# a single keypress: only 'y'/'Y' confirms; Enter, Esc, any other key, or the
-# timeout all decline. Modelled on the nix-config `system aliases` prompt.
 export def confirm-prompt [message: string]: nothing -> bool {
   print --no-newline $"($message) \(y/N\) > "
   let key = ((input listen --timeout 20sec --types [key]).code? | default "")
-  print $key  # echo the keypress, which `input listen` swallows
+  print $key  # `input listen` does not echo
   ($key | str lowercase) == "y"
 }
 
-# Saved Zellij session name for a workspace dir, or null if none/empty.
 export def read-session-name [dir: path]: nothing -> oneof<string, nothing> {
   let file = ($dir | path join $ZELLIJ_SESSION_FILE)
   if not ($file | path exists) { return null }
@@ -111,29 +85,19 @@ export def read-session-name [dir: path]: nothing -> oneof<string, nothing> {
   if ($name | is-empty) { null } else { $name }
 }
 
-# Persist the chosen Zellij session name for a workspace dir.
 export def save-session-name [dir: path, name: string]: nothing -> nothing {
   $name | save --force ($dir | path join $ZELLIJ_SESSION_FILE)
 }
 
-# Remove a workspace's saved Zellij session-name file, if present.
 export def remove-session-name [dir: path]: nothing -> nothing {
   let file = ($dir | path join $ZELLIJ_SESSION_FILE)
   if ($file | path exists) { rm --force $file }
 }
 
-# Basename prefix of a workspace's metadata file, at the workspace root. The
-# extension names the format: `.workspace.meta.yaml`, `.workspace.meta.toml`,
-# and so on.
 const METADATA_PREFIX = ".workspace.meta."
 
-# Path of a workspace's metadata file, or null when there is none.
-#
-# The name is matched case-insensitively, extension included, since `open`
-# lowercases an extension before inferring a parser from it.
-#
-# The extension is not constrained, so more than one candidate can exist. That
-# is ambiguous: the first by name wins and the rest are named in a warning.
+# Matched case-insensitively, because `open` lowercases the extension before
+# picking a parser.
 export def metadata-file [dir: path]: nothing -> oneof<path, nothing> {
   if not ($dir | path exists) { return null }
   let found = (ls --all $dir
@@ -149,23 +113,14 @@ export def metadata-file [dir: path]: nothing -> oneof<path, nothing> {
   $found | first
 }
 
-# A workspace's metadata: its `.workspace.meta.<format>` file parsed by format,
-# or null when the workspace has no such file.
-#
-# The extension selects the parser, so any format with a `from <ext>` command
-# (json, yaml, toml, nuon, csv, ...) yields structured data. Anything else, and
-# any file that fails to parse, comes back as raw text. Reading is best-effort:
-# a broken file is a warning, not an error, so `workspace info` still answers.
+# Parsed by extension, falling back to text. A broken file is a warning, not an
+# error, so callers still answer.
 export def workspace-metadata [dir: path]: nothing -> any {
   let file = (metadata-file $dir)
   if $file == null { return null }
   let name = ($file | path basename)
-  # `open` lowercases the extension to infer a parser, so the check for one has
-  # to lower it too: `from YAML` is not a command, but `open x.YAML` parses.
   let ext = ($file | path parse | get extension | str lowercase)
-  # `open` infers the parser from the extension. It only has one to infer when a
-  # matching `from` command exists; without one it hands back bytes, so read the
-  # file as text instead.
+  # Without a `from <ext>` command, `open` returns bytes.
   if (which $"from ($ext)" | is-empty) {
     return (read-text $file $name)
   }
@@ -177,17 +132,12 @@ export def workspace-metadata [dir: path]: nothing -> any {
   }
 }
 
-# Path a new metadata file is created at.
-#
-# YAML because it needs the least quoting for what these files mostly hold: a
-# bare URI is a valid scalar, so only the markdown link form takes quotes.
-# `.yaml` over `.yml`: both parse, and it is what yaml.org itself recommends.
+# YAML needs the least quoting: a bare URI is a valid scalar.
 export def metadata-new-file [dir: path]: nothing -> path {
   $dir | path join $"($METADATA_PREFIX)yaml"
 }
 
-# Seed contents for a new metadata file: comments only, so an untouched file
-# parses as no metadata rather than as keys nobody meant to set.
+# Comments only, so an untouched file parses as no metadata.
 export def metadata-template [name: string]: nothing -> string {
   ([
     $"# Metadata for the ($name) workspace, reported by `workspace info`."
@@ -202,10 +152,7 @@ export def metadata-template [name: string]: nothing -> string {
   ] | str join (char newline))
 }
 
-# Open a file in the user's editor, blocking until the editor exits.
-#
-# $EDITOR wins over $VISUAL. The value is split on whitespace, so a setting that
-# carries flags (`code -w`) runs as intended rather than as one odd filename.
+# Split on whitespace so a value with flags, such as `code -w`, works.
 export def open-in-editor [file: path]: nothing -> nothing {
   let editor = ([($env.EDITOR? | default ""), ($env.VISUAL? | default "")]
     | each {|candidate| $candidate | str trim }
@@ -224,10 +171,8 @@ export def open-in-editor [file: path]: nothing -> nothing {
   ^$command ...($parts | skip 1) $file
 }
 
-# Metadata key suffixes marking a value as something to link to.
 const LINK_SUFFIXES = ["link", "url", "uri"]
 
-# True when a metadata key names a link: `url`, `things-link`, `obsidian-uri`.
 def link-key [key: string]: nothing -> bool {
   let lowered = ($key | str lowercase)
   $LINK_SUFFIXES | any {|suffix|
@@ -235,14 +180,7 @@ def link-key [key: string]: nothing -> bool {
   }
 }
 
-# One link-named value as a hyperlink, in either of two forms:
-#
-#   https://example.com          the URI is its own label
-#   [some text](https://…)       markdown: `some text` is the label
-#
-# A label hides the URI it points at, so it is painted blue to read as a link,
-# the same blue an open PR gets. A bare URI already looks like one, so it is
-# left unpainted. A markdown form with an empty label falls back to the URI.
+# A label hides its URI, so it is painted blue to read as a link.
 def link-value [value: string]: nothing -> string {
   let md = ($value
     | str trim
@@ -255,34 +193,22 @@ def link-value [value: string]: nothing -> string {
   $link.uri | ansi link --text $"(ansi blue)($link.label)(ansi reset)"
 }
 
-# Wrap the string values of link-named keys in terminal hyperlinks, at any depth.
-#
-# A terminal auto-detects only the schemes on its own allowlist, so `things:///`
-# and `obsidian://` are never clickable as plain text however they are written.
-# An explicit OSC 8 hyperlink skips that matcher, and the terminal hands the URI
-# to the system handler on a click.
-#
-# The key decides, not the value: nothing checks that a link-named value is a
-# URI, so a value that is not one gets wrapped too and does nothing when clicked.
-# `key` is the key the value was found under, and is null at the top level.
-# See `link-value` for the two value forms.
+# Terminals auto-detect only allowlisted schemes, so `things:///` and
+# `obsidian://` need an explicit OSC 8 hyperlink to be clickable.
 export def linkify [value: any, key?: string]: nothing -> any {
   match ($value | describe --detailed | get type) {
     "record" => (
       $value
       | transpose k v
-      # `merge` over `insert` so a key containing dots stays one flat key
-      # instead of being read as a path into a nested record.
+      # `insert` would read a dotted key as a nested path.
       | reduce --fold {} {|pair, acc| $acc | merge { ($pair.k): (linkify $pair.v $pair.k) } }
     )
-    # A list inherits its key, so every entry under `notes-url` is a link.
     "list" => ($value | each {|item| linkify $item $key })
     "string" => (if ($key != null) and (link-key $key) { link-value $value } else { $value })
     _ => $value
   }
 }
 
-# A metadata file's contents as trimmed text, or null when it cannot be read.
 def read-text [file: path, name: string]: nothing -> oneof<string, nothing> {
   try {
     open --raw $file | decode utf-8 | str trim
@@ -292,10 +218,8 @@ def read-text [file: path, name: string]: nothing -> oneof<string, nothing> {
   }
 }
 
-# Rewrite the Zellij session name in clawd-back's per-session state files after a
-# rename, so notify/click keep resolving the right pane. Handles both the current
-# nested schema (`multiplexer.session`) and the legacy flat `zellij_session_id`.
-# Best-effort.
+# Keeps clawd-back's notify/click resolving the right pane after a rename.
+# `zellij_session_id` is clawd-back's legacy schema.
 export def sync-clawd-session-id [old: string, new: string]: nothing -> nothing {
   let dir = ($env.HOME | path join ".cache" "clawd-back")
   if not ($dir | path exists) { return }
@@ -315,7 +239,7 @@ export def sync-clawd-session-id [old: string, new: string]: nothing -> nothing 
   }
 }
 
-# Kill a running Zellij session, leaving it resurrectable. Best-effort.
+# Leaves the session resurrectable.
 export def zellij-kill-session [name: string]: nothing -> nothing {
   if not (tool-installed "zellij") { return }
   let result = (^zellij kill-session -- $name | complete)
@@ -324,8 +248,6 @@ export def zellij-kill-session [name: string]: nothing -> nothing {
   }
 }
 
-# Delete a Zellij session entirely: kill it if running, then drop its
-# resurrectable state. Best-effort.
 export def zellij-delete-session [name: string]: nothing -> nothing {
   if not (tool-installed "zellij") { return }
   let result = (^zellij delete-session --force -- $name | complete)
@@ -334,9 +256,8 @@ export def zellij-delete-session [name: string]: nothing -> nothing {
   }
 }
 
-# Rename a live Zellij session. Best-effort; returns true on success. Only works
-# while the session's server is running (an EXITED/resurrectable session has no
-# server to act on), so callers should not persist the new name on a false.
+# Fails on an exited session, which has no server to act on. Do not persist the
+# new name on false.
 export def zellij-rename-session [from: string, to: string]: nothing -> bool {
   if not (tool-installed "zellij") { return false }
   let result = (^zellij --session $from action rename-session -- $to | complete)
@@ -347,7 +268,6 @@ export def zellij-rename-session [from: string, to: string]: nothing -> bool {
   true
 }
 
-# True if a Zellij session with this exact name currently exists.
 export def zellij-session-exists [name: string]: nothing -> bool {
   if not (tool-installed "zellij") { return false }
   ^zellij list-sessions --no-formatting --short
@@ -357,12 +277,8 @@ export def zellij-session-exists [name: string]: nothing -> bool {
   | any {|s| ($s | str trim) == $name }
 }
 
-# All Zellij sessions as {name, state} rows sorted case-insensitively by name,
-# where state is "active" for a running session or "exited" for a resurrectable
-# one. `--short` is avoided
-# because it drops the EXITED marker we classify on. Best-effort: any failure
-# (or no sessions) yields []. Real session lines always carry a "[Created ...]"
-# stamp, which also filters out the "No active zellij sessions" notice.
+# `--short` drops the EXITED marker. Filtering on "[Created" also drops the "No
+# active zellij sessions" notice.
 export def zellij-sessions []: nothing -> table {
   if not (tool-installed "zellij") { return [] }
   let result = (^zellij list-sessions --no-formatting | complete)
@@ -373,7 +289,7 @@ export def zellij-sessions []: nothing -> table {
   | where {|line| $line | str contains "[Created" }
   | each {|line|
       {
-        # Split on " [Created" (not " ") so multi-word session names survive.
+        # Session names can contain spaces.
         name: ($line | split row " [Created" | first | str trim)
         state: (if ($line | str contains "EXITED") { "exited" } else { "active" })
       }
@@ -381,17 +297,13 @@ export def zellij-sessions []: nothing -> table {
   | sort-by --ignore-case name
 }
 
-# Session names claimed by some workspace's saved `.zellij_session`. The set a
-# live session must fall outside of to count as an orphan.
 export def claimed-sessions []: nothing -> list<string> {
   workspace-names
   | each {|n| read-session-name (workspace-dir $n) }
   | compact
 }
 
-# Live Zellij sessions owned by no workspace: started outside the workspace
-# tooling (other repos, ad-hoc). Rows are {name, state} as from `zellij-sessions`.
-# Pass --sessions to reuse an already-computed session table.
+# Zellij sessions owned by no workspace.
 export def orphan-sessions [
   --sessions: table   # Precomputed `zellij-sessions`; omit to fetch fresh
 ]: nothing -> table {
@@ -400,11 +312,8 @@ export def orphan-sessions [
   $all | where name not-in $claimed
 }
 
-# The live name of the pane's own Zellij session, or null when not inside Zellij
-# (or on any failure). `zellij list-sessions` marks the attached session with a
-# trailing "(current)"; that marker stays correct after a Zellij-UI rename, while
-# $env.ZELLIJ_SESSION_NAME goes stale (captured at pane spawn). Split on
-# " [Created" rather than " " so multi-word session names survive.
+# $env.ZELLIJ_SESSION_NAME goes stale after a rename in the Zellij UI. The
+# "(current)" marker does not.
 export def zellij-current-session []: nothing -> oneof<string, nothing> {
   if not (tool-installed "zellij") { return null }
   let result = (^zellij list-sessions --no-formatting | complete)
@@ -415,9 +324,7 @@ export def zellij-current-session []: nothing -> oneof<string, nothing> {
   if ($name | is-empty) { null } else { $name }
 }
 
-# The focused Ghostty window's current title, or null if it can't be read (not
-# Ghostty, no osascript, no window). Reading the `name` works even though setting
-# it does not. Best-effort.
+# Reading `name` works, although setting it does not.
 export def ghostty-title []: nothing -> oneof<string, nothing> {
   let result = (^osascript -e 'tell application "Ghostty" to get name of front window' | complete)
   if $result.exit_code != 0 { return null }
@@ -425,10 +332,8 @@ export def ghostty-title []: nothing -> oneof<string, nothing> {
   if ($title | is-empty) { null } else { $title }
 }
 
-# Pin the focused Ghostty tab's title to `title` via the "Change Tab Title..."
-# action (see the AppleScript for why UI automation is the only durable path).
-# Best-effort: needs Accessibility permission and the target tab focused, so a
-# failure is noted, not fatal.
+# Needs Accessibility permission and the target tab focused. See the AppleScript
+# for why it drives the UI.
 export def ghostty-set-title [title: string]: nothing -> nothing {
   const script = (path self | path dirname | path dirname
     | path join "applescript" "ghostty-set-title.applescript")
@@ -438,12 +343,7 @@ export def ghostty-set-title [title: string]: nothing -> nothing {
   }
 }
 
-# State of a saved session name against the session table:
-#   name is active  → "active"   (running)
-#   name is exited  → "exited"   (resurrectable via attach)
-#   name not listed → "offline"  (saved name matches no Zellij session)
-#
-# Callers guard for "no session saved" (a null name) themselves before calling.
+# "active", "exited", or "offline" when Zellij has no session of that name.
 export def session-state [
   saved: string    # A workspace's saved session name
   sessions: table  # Rows from `zellij-sessions`
@@ -452,10 +352,6 @@ export def session-state [
   if ($match | is-empty) { "offline" } else { $match | first | get state }
 }
 
-# Paint `text` by a session state: an active meta workbench is purple, an active
-# workspace is blue, a dormant saved session is red (both "exited", still
-# resurrectable, and "offline", the saved name is gone from Zellij entirely).
-# When there is no saved session at all (null state), `text` is returned as-is.
 export def paint-state [
   text: string                       # The string to color
   state: oneof<string, nothing>      # A `session-state` value, or null for no session
@@ -469,18 +365,9 @@ export def paint-state [
   if $color == null { $text } else { $"($color)($text)(ansi reset)" }
 }
 
-# Attach to (or create) a Zellij session in `dir`, re-prompting on a bad name.
-#
-# Creation and entry are one step: a session created with `--create-background`
-# comes up with its first pane never started, so the client lands on the status
-# bar plugin and the tab has to be closed by hand (zellij 0.45). The settled name
-# is saved to the workspace so later runs can reuse it. Steps:
-#   1. With --prompt, prompt for a name up front, prefilled with `session`
-#      (Enter accepts it).
-#   2. If we're already in that session, there's nothing to do.
-#   3. Otherwise enter it, creating it when it does not exist yet.
-#   4. If zellij rejects the name it prints its own reason; prompt for a
-#      different name (no prefill) and go to 2. Empty input cancels.
+# Creation and entry are one step. A session made with `--create-background`
+# never starts its first pane, so the client lands on the status bar plugin
+# (zellij 0.45).
 export def zellij-attach [
   dir: path        # Workspace directory to launch from
   session: string  # Session name (a saved name, or the workspace name on a first run)
@@ -514,13 +401,9 @@ export def zellij-attach [
   }
 }
 
-# Enter a Zellij session, creating it when it does not exist yet.
+# Nested `attach` stalls, so switch when already in a session.
 #
-# Nested `attach` stalls, so switch instead when already in a session;
-# `switch-session` creates the session too when the name is unknown.
-#
-# `attach` takes no `--`: it separates the session name from an initial command,
-# so the name lands as the command and zellij reports no session given.
+# `attach` takes no `--`: zellij reads what follows it as a command.
 def zellij-enter [
   dir: path        # Working directory for a session being created
   session: string  # Session name
@@ -532,17 +415,12 @@ def zellij-enter [
   }
 }
 
-# Attach to (or switch to, when already nested) an existing Zellij session by
-# name. For orphan sessions owned by no workspace: there's no dir to launch from
-# and no `.zellij_session` to persist, so this skips the create/prompt/save path
-# of `zellij-attach`. Assumes the session already exists (active or exited).
 export def zellij-attach-existing [session: string]: nothing -> nothing {
   assert-tool "zellij" "attach to a session"
   if $session == ($env.ZELLIJ_SESSION_NAME? | default "") {
     print $"Already in Zellij session '($session)'."
     return
   }
-  # Nested `attach` stalls; switch instead when already in a session.
   if ($env.ZELLIJ_SESSION_NAME? | default "" | is-not-empty) {
     ^zellij action switch-session -- $session
   } else {
@@ -550,11 +428,6 @@ export def zellij-attach-existing [session: string]: nothing -> nothing {
   }
 }
 
-# Infer the current workspace name from $env.PWD, or null if not inside one.
-#
-# A path under workspaces/<name>/… resolves to that workspace; anywhere else
-# inside the workbench repo (including the root and workspaces/ itself) resolves
-# to the meta home workspace.
 export def try-infer-workspace []: nothing -> oneof<string, nothing> {
   let ws_root = ($env.WORKBENCH_WORKSPACES_ROOT | path expand)
   let home_dir = ($ws_root | path dirname)
@@ -568,12 +441,9 @@ export def try-infer-workspace []: nothing -> oneof<string, nothing> {
   null
 }
 
-# cd back into `dir` if it still exists, after a bare `cd` has restored a good cwd.
-#
-# A blocking `zellij` attach can return into a directory that a `workspace
-# delete` removed in the meantime. Nushell then refuses to run any command but
-# `cd` while `$env.PWD` is gone, so every caller does the recovery itself, in
-# this exact order:
+# A blocking `zellij` attach can return into a directory deleted in the
+# meantime. Nushell then runs nothing but `cd` until PWD exists, so callers
+# recover in this exact order:
 #
 #   let root = (workspace-dir (workspace-home))   # before blocking; a call now still works
 #   let origin = $env.PWD
@@ -588,8 +458,6 @@ export def --env restore-cwd [dir: path]: nothing -> nothing {
   }
 }
 
-# List the git repos in a workspace. Normal workspaces contain a repo per
-# immediate subdirectory; the meta home workspace's only repo is the root itself.
 export def workspace-repos [name: string]: nothing -> list<path> {
   let dir = (workspace-dir $name)
   if not ($dir | path exists) {
@@ -610,17 +478,13 @@ export def workspace-repos [name: string]: nothing -> list<path> {
   }
 }
 
-# Git config keys recording which branch a branch was built on, and that
-# branch's tip at the time. Git owns the `branch.<name>` section, so a branch
-# rename carries these keys and a branch delete removes them. Git lowercases the
-# key when it stores it, so `--get-regexp` patterns must match the lowered form.
+# Kept under `branch.<name>`, so git carries them on rename and drops them on
+# delete. Git stores keys lowercased, so `--get-regexp` must match that form.
 const BASE_KEY = "workbenchBase"
 const BASE_SHA_KEY = "workbenchBaseSha"
 
-# Longest base chain `branch-chain` will walk before calling it malformed.
 const CHAIN_DEPTH_LIMIT = 10
 
-# The current branch of a repo, or null when HEAD is detached.
 export def current-branch [repo: path]: nothing -> oneof<string, nothing> {
   let name = (^git -C $repo branch --show-current | str trim)
   if ($name | is-empty) { null } else { $name }
@@ -631,18 +495,12 @@ export def local-branch-exists [repo: path, branch: string]: nothing -> bool {
   $out.exit_code == 0
 }
 
-# The single value of `key` among a branch's parsed config rows, or null.
 def config-value [rows: table, key: string]: nothing -> oneof<string, nothing> {
   let hits = ($rows | where key == $key | get value)
   if ($hits | is-empty) { null } else { $hits | first }
 }
 
-# Every branch's recorded base and base sha, as a `branch`/`base`/`sha` table.
-#
-# One `git config` call returns the whole repo, so a caller iterating branches
-# reads once and filters. A branch name may contain dots and slashes, so the
-# name is parsed as everything between the `branch.` prefix and the trailing
-# key rather than by splitting on dots.
+# A branch name can contain dots, so it is not split on them.
 export def branch-records [repo: path]: nothing -> table {
   let key = ($BASE_KEY | str lowercase)
   let sha_key = ($BASE_SHA_KEY | str lowercase)
@@ -661,7 +519,6 @@ export def branch-records [repo: path]: nothing -> table {
   }
 }
 
-# Record the branch a branch is built on, and that branch's current tip.
 export def set-branch-base [
   repo: path
   branch: string
@@ -672,17 +529,12 @@ export def set-branch-base [
   ^git -C $repo config set $"branch.($branch).($BASE_SHA_KEY)" $sha
 }
 
-# Drop a branch's recorded base. Unsetting a missing key is not an error here.
 export def clear-branch-base [repo: path, branch: string]: nothing -> nothing {
   ^git -C $repo config unset $"branch.($branch).($BASE_KEY)" | complete | ignore
   ^git -C $repo config unset $"branch.($branch).($BASE_SHA_KEY)" | complete | ignore
 }
 
-# The repo's default branch, or null when neither source answers.
-#
-# `gh repo clone` sets `refs/remotes/origin/HEAD`, so the local read almost
-# always wins; the `gh` call covers a clone made some other way, at the cost of
-# a network round trip.
+# `gh repo clone` sets origin/HEAD. The `gh` call covers other clones.
 export def default-branch [repo: path]: nothing -> oneof<string, nothing> {
   let head = (^git -C $repo symbolic-ref --short refs/remotes/origin/HEAD | complete)
   if $head.exit_code == 0 {
@@ -694,7 +546,6 @@ export def default-branch [repo: path]: nothing -> oneof<string, nothing> {
   $out.stdout | from json | get defaultBranchRef.name
 }
 
-# True when origin has a branch of this name, i.e. the branch has been pushed.
 export def remote-branch-exists [repo: path, branch: string]: nothing -> bool {
   let out = (^git -C $repo rev-parse --verify --quiet $"refs/remotes/origin/($branch)" | complete)
   $out.exit_code == 0
@@ -702,12 +553,8 @@ export def remote-branch-exists [repo: path, branch: string]: nothing -> bool {
 
 const PR_LIST_LIMIT = 100
 
-# Your open PRs in a repo. Each row's head and base are one edge of a branch
-# stack, so a single call resolves every link of a stack you own.
-#
-# Scoped to `--author @me` because an unscoped list truncates at
-# $PR_LIST_LIMIT in a busy repo, and silently dropping the edge you need is
-# worse than missing someone else's PR. `pr-for-branch` covers the remainder.
+# Scoped to `--author @me`: an unscoped list truncates in a busy repo and can
+# drop the edge you need. `pr-for-branch` covers the rest.
 export def repo-prs [repo: path]: nothing -> table {
   if not (tool-installed "gh") { return [] }
   let out = (do {
@@ -718,8 +565,6 @@ export def repo-prs [repo: path]: nothing -> table {
   $out.stdout | from json
 }
 
-# The open PR whose head is `branch`, or null. One network call, so callers
-# reach for it only when the bulk `repo-prs` table has no row for the branch.
 export def pr-for-branch [repo: path, branch: string]: nothing -> oneof<record, nothing> {
   if not (tool-installed "gh") { return null }
   let out = (do {
@@ -731,16 +576,8 @@ export def pr-for-branch [repo: path, branch: string]: nothing -> oneof<record, 
   if ($rows | is-empty) { null } else { $rows | first }
 }
 
-# Which branch `branch` is built on: `{ base, sha, source }`.
-#
-# `source` is how the base was found, in the order tried:
-#   recorded  the git config record, when the branch it names still exists
-#   pr        the base of the branch's open PR
-#   default   the repo default branch
-#
-# A recorded base whose branch is gone is the merged-parent case: it falls
-# through to the PR, which GitHub retargets on merge. All three are null when
-# nothing resolves, which is the root of a chain.
+# A recorded base whose branch is gone is a merged parent. It falls through to
+# the PR, which GitHub retargets on merge.
 export def resolve-base [
   repo: path
   branch: string
@@ -759,8 +596,6 @@ export def resolve-base [
   let pr = if ($bulk | is-not-empty) {
     $bulk | first
   } else if (remote-branch-exists $repo $branch) {
-    # Not one of yours, or older than the bulk window. An unpushed branch has no
-    # PR to find, so the remote check keeps the extra call off the common path.
     pr-for-branch $repo $branch
   }
   if $pr != null {
@@ -772,15 +607,7 @@ export def resolve-base [
   { base: null, sha: null, source: null }
 }
 
-# The stack `branch` sits in, tip first, one row per link.
-#
-# Each row is `{ branch, base, sha, source }`. Walking stops at the default
-# branch, at a base with no local branch of that name, or when nothing
-# resolves; the last row's base is the root, and is the only one to fetch from
-# origin. A rebase consumes the rows in reverse, lowest link first.
-#
-# A cycle or a chain past $CHAIN_DEPTH_LIMIT raises. Callers running across
-# repos should wrap this in `try` so one malformed repo does not end the run.
+# Tip first. The last row's base is the root.
 export def branch-chain [
   repo: path
   branch: string
@@ -822,10 +649,6 @@ export def branch-chain [
   $chain
 }
 
-# Commits on HEAD that the upstream branch lacks, and the reverse. A branch can
-# be both at once, so they are separate counts, not one signed number.
-#
-# Both are null when there is no upstream: never pushed, or a detached HEAD.
 def upstream-divergence [repo: path]: nothing -> record {
   let counts = (^git -C $repo rev-list --count --left-right "@{upstream}...HEAD" | complete)
   if $counts.exit_code != 0 {
@@ -835,14 +658,8 @@ def upstream-divergence [repo: path]: nothing -> record {
   { ahead: ($pair | get 1 | into int), behind: ($pair | get 0 | into int) }
 }
 
-# Fields fetched for a PR. A draft reports state OPEN, and an approval says
-# nothing about the checks, so every gate the `pr` cell reports needs its own
-# field.
 const PR_FIELDS = "number,url,state,isDraft,reviewDecision,mergeable,statusCheckRollup"
 
-# The PR for a repo's current branch, or null when there is no PR. Skipped
-# without an upstream: an unpushed branch cannot have a PR, and `gh` costs a
-# network round trip per repo.
 def branch-pr [repo: path, upstream: bool]: nothing -> oneof<record, nothing> {
   if (not $upstream) or (not (tool-installed "gh")) {
     return null
@@ -854,10 +671,8 @@ def branch-pr [repo: path, upstream: bool]: nothing -> oneof<record, nothing> {
   $out.stdout | from json
 }
 
-# One rollup entry's verdict: "failing", "pending" or "passing".
-#
-# An entry is either a check run, which carries `conclusion` once it finishes
-# and `status` before that, or a commit status, which carries `state`.
+# A check run carries `conclusion` once finished. A commit status carries
+# `state`.
 def check-verdict [entry: record]: nothing -> string {
   let conclusion = ($entry.conclusion? | default "")
   if ($conclusion | is-not-empty) {
@@ -874,8 +689,6 @@ def check-verdict [entry: record]: nothing -> string {
   }
 }
 
-# The combined verdict of a PR's checks, or null when it has none. One failure
-# outweighs anything still running.
 def checks-state [rollup: list]: nothing -> oneof<string, nothing> {
   if ($rollup | is-empty) { return null }
   let verdicts = ($rollup | each {|entry| check-verdict $entry })
@@ -886,11 +699,7 @@ def checks-state [rollup: list]: nothing -> oneof<string, nothing> {
   }
 }
 
-# What a PR waits on, as a label and the color to paint it.
-#
-# The gates are ranked, and only the first one reports: a PR that is approved
-# but failing its checks reads as failing, because that is what has to change
-# before it merges.
+# Only the first gate reports: it is what has to change before the PR merges.
 def pr-tag [pr: record]: nothing -> record {
   let checks = (checks-state ($pr.statusCheckRollup? | default []))
   let review = ($pr.reviewDecision? | default "")
@@ -907,22 +716,13 @@ def pr-tag [pr: record]: nothing -> record {
   }
 }
 
-# A PR as one clickable `#<number> <what it waits on>`, in the tag's color.
 def pr-link [pr: oneof<record, nothing>]: nothing -> any {
   if $pr == null { return null }
   let tag = (pr-tag $pr)
   $pr.url | ansi link --text $"($tag.paint)#($pr.number) ($tag.label)(ansi reset)"
 }
 
-# How the branch stands against its upstream:
-#
-#   synced        even with the upstream, as of the last fetch
-#   out-of-sync   ahead of it, behind it, or both
-#   unpushed      no upstream is configured: the branch lives only here
-#   gone          one is configured, but its remote-tracking branch is deleted
-#
-# Which side a branch is out of sync on has its own columns, so it is one state
-# here, not three. A detached HEAD reports synced: the name already says it.
+# A detached HEAD reports synced. Its branch name already says detached.
 def upstream-state [repo: path, branch: string, divergence: record]: nothing -> string {
   if $divergence.ahead != null {
     return (if ($divergence.ahead > 0) or ($divergence.behind > 0) {
@@ -932,13 +732,11 @@ def upstream-state [repo: path, branch: string, divergence: record]: nothing -> 
     })
   }
   if ($branch | is-empty) { return "synced" }
-  # Divergence is null either way, so the config is what separates a branch that
-  # was never pushed from one whose remote branch was deleted under it.
+  # A configured remote with no tracking branch means it was deleted.
   let configured = (^git -C $repo config --get $"branch.($branch).remote" | complete)
   if $configured.exit_code == 0 { "gone" } else { "unpushed" }
 }
 
-# The branch name, marked by how it stands against its upstream.
 def mark-branch [branch: string, state: string]: nothing -> string {
   match $state {
     "out-of-sync" => $"(ansi yellow)($branch)(ansi reset)"
@@ -948,10 +746,6 @@ def mark-branch [branch: string, state: string]: nothing -> string {
   }
 }
 
-# Branch, working-tree state, upstream divergence, and PR for a single repo path.
-#
-# `status` is the working-tree state: `clean` or `dirty`. Detachment shows up in
-# `branch`, so a detached HEAD still reports whether it is dirty.
 export def repo-summary [repo: path]: nothing -> record {
   let current = (^git -C $repo branch --show-current | str trim)
   let branch = if ($current | is-empty) {
@@ -976,8 +770,6 @@ export def repo-summaries [name: string]: nothing -> table {
   workspace-repos $name | par-each --keep-order {|r| repo-summary $r }
 }
 
-# Names from `pool` matching a query: an exact name wins outright, otherwise
-# every name that contains the substring (case-insensitive).
 def match-workspaces [query: string, pool: list<string>]: nothing -> list<string> {
   if $query in $pool {
     [$query]
@@ -986,12 +778,8 @@ def match-workspaces [query: string, pool: list<string>]: nothing -> list<string
   }
 }
 
-# Print a workspace's name (flagging dirty repos) followed by its full contents,
-# including hidden files, so the user sees exactly what a delete/trash removes.
 def print-workspace-contents [name: string]: nothing -> nothing {
   let dir = (workspace-dir $name)
-  # The meta workspace's repo is never removed, so don't list it as deletable
-  # contents; just flag the session that will go.
   if $name == (workspace-home) {
     print $"  (ansi cyan)($name)(ansi reset) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
     let saved = (read-session-name $dir)
@@ -1001,8 +789,6 @@ def print-workspace-contents [name: string]: nothing -> nothing {
     return
   }
   let repos = (repo-summaries $name)
-  # Unpushed commits die with the workspace just as uncommitted changes do, so
-  # both are flagged before a delete or trash.
   let dirty = ($repos | where status == "dirty" | length)
   let unpushed = ($repos | where ($it.ahead | default 0) > 0 | length)
   let note = ([
@@ -1036,22 +822,11 @@ def print-workspace-contents [name: string]: nothing -> nothing {
   }
 }
 
-# Select one or more workspaces from an optional query.
+# An exact name or a unique substring resolves without a picker. A query that
+# matches nothing opens the picker over everything.
 #
-# Resolution ladder:
-#   null / empty query   → picker over all workspaces
-#   exact name match     → that workspace, no picker
-#   unique substring     → that workspace, no picker
-#   ambiguous substring  → fuzzy picker narrowed to the matches
-#   no substring match   → fuzzy picker over ALL workspaces (fall back)
-#
-# Matching is case-insensitive; an exact name always wins outright. Returns the
-# chosen names; empty when the picker is cancelled or --confirm is declined.
-#
-# With --with-orphans the candidate pool also includes orphan Zellij sessions
-# (live sessions owned by no workspace); a returned name that isn't a workspace
-# is such a session. Only meaningful alongside --color-state, and incompatible
-# with --list-contents (which assumes every selection is a real workspace dir).
+# --list-contents assumes every selection is a workspace, so it cannot be used
+# with --with-orphans.
 export def select-workspaces [
   query?: string                        # Name or partial; omit to pick from all
   --multi (-m)                          # Allow selecting several; off → single
@@ -1062,7 +837,6 @@ export def select-workspaces [
   --prompt (-p): string = "Workspace:"  # Picker title + confirm/contents header
 ]: nothing -> list<string> {
   let ws_names = (workspace-names)
-  # Fetch the session table once when anything below needs it, not per entry.
   let sessions = (if $color_state or $with_orphans { zellij-sessions } else { [] })
   let orphans = (if $with_orphans { orphan-sessions --sessions $sessions } else { [] })
   let all = (($ws_names ++ ($orphans | get name)) | sort --ignore-case)
@@ -1074,8 +848,6 @@ export def select-workspaces [
     }
   }
 
-  # A non-null query resolves to its matches; empty matches (and a null query)
-  # fall back to every candidate. A lone match is taken directly, no picker.
   let matches = if $query == null { $all } else { match-workspaces $query $all }
   let candidates = if ($matches | is-empty) { $all } else { $matches }
   let direct = ($query != null) and (($matches | length) == 1)
@@ -1083,8 +855,6 @@ export def select-workspaces [
   let selection = if $direct {
     $matches
   } else if $color_state {
-    # Show each entry colored by session state. `--display` colors the label but
-    # `input list` still returns the original record, so we map back to names.
     let home = (workspace-home)
     let items = ($candidates | each {|n|
       if $n in $ws_names {
@@ -1132,8 +902,6 @@ export def select-workspaces [
   $selection
 }
 
-# Resolve which workspace a user-facing command should target: either via an
-# interactive picker (--choose) or by inferring from $env.PWD.
 export def select-workspace [choose: bool]: nothing -> string {
   if $choose {
     let sel = (select-workspaces --prompt "Workspace:")
@@ -1157,18 +925,7 @@ export def select-workspace [choose: bool]: nothing -> string {
   }
 }
 
-# Resolve which Zellij session a `workspace zellij` verb should act on.
-#
-# Without $choose: the current workspace (inferred from PWD) and its session, the
-# saved `.zellij_session` name or, failing that, the workspace name.
-#
-# With $choose: a picker over every workspace PLUS every orphan live session (one
-# owned by no workspace). Picking a workspace resolves as above; picking an
-# orphan targets that live session directly.
-#
-# Returns { session: string, dir: path|null, workspace: string|null }; `dir` and
-# `workspace` are null only for an orphan pick, signalling callers to skip any
-# `.zellij_session` bookkeeping.
+# `dir` and `workspace` are null for an orphan session.
 export def select-zellij-target [choose: bool]: nothing -> record {
   if not $choose {
     let name = (select-workspace false)
@@ -1219,8 +976,7 @@ export def select-zellij-target [choose: bool]: nothing -> record {
   }
 }
 
-# The git repo holding PWD, when PWD is outside every workspace. Null inside a
-# workspace, and null when PWD is in no repo at all.
+# The git repo holding PWD, when PWD is outside every workspace.
 export def loose-repo []: nothing -> oneof<path, nothing> {
   if (try-infer-workspace) != null { return null }
   let out = (^git -C $env.PWD rev-parse --show-toplevel | complete)
@@ -1228,11 +984,8 @@ export def loose-repo []: nothing -> oneof<path, nothing> {
   $out.stdout | str trim
 }
 
-# The repos a command acts on: the whole workspace, or the one named by --repo.
-#
-# Outside a workspace it falls back to the enclosing git repo, so a plain
-# checkout such as nix-config gets the same behaviour scoped to itself. --choose
-# asks for a workspace by name, so it never takes the fallback.
+# Outside a workspace, falls back to the enclosing git repo, so a plain
+# checkout such as nix-config works too.
 export def target-repos [
   choose: bool
   only: oneof<string, nothing>

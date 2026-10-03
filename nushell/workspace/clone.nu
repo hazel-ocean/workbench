@@ -2,18 +2,11 @@ const UTIL = path self | path dirname | path dirname | path join "util.nu"
 use $UTIL *
 use secrets/shared.nu *
 
-# Clone repos into a workspace via `gh` (defaults to the current workspace)
+# Clone repos into a workspace via `gh`
 #
-# Each repo is `[<org>/]<repo>[<ref>][=<dir>]`. A bare name is resolved against
-# $env.WORKBENCH_DEFAULT_GITHUB_ORG; prefix `owner/` to override the org. An optional
-# trailing ref checks out after cloning: `@<tag-or-branch>` or `#<pr-number>`.
-# `=<dir>` names the directory to clone into, in place of the repo name.
-#
-# Clones are shallow and blobless by default: the last 90 days of history, and
-# file contents only for what's checked out. Pass --full for a complete clone.
-#
-# When the secrets store holds files for a repo, a picker offers to copy them in
-# once the clone is checked out. See `workspace secrets copy`.
+# A bare repo name uses $env.WORKBENCH_DEFAULT_GITHUB_ORG. Clones are shallow
+# (90 days) and blobless unless --full is given. When the secrets store holds
+# files for a repo, a picker offers to copy them in.
 #
 #   workspace clone web-app
 #   workspace clone other-org/web-app
@@ -71,23 +64,7 @@ export def main [
   }
 }
 
-# Parse a repo spec into a clone slug, an optional ref to check out, and an
-# optional destination directory name.
-#
-# Accepted forms (org defaults to $env.WORKBENCH_DEFAULT_GITHUB_ORG when omitted):
-#   <repo>                 <org>/<repo>
-#   <repo>@<ref>           <org>/<repo>@<ref>    ref = tag or branch
-#   <repo>#<pr>            <org>/<repo>#<pr>     pr  = PR number
-#   <repo>=<dir>           clone into <dir> instead of the repo name
-#
-# `=<dir>` is cut from the last `=` in the spec, so a branch name may contain
-# `=` but a destination name may not.
-#
-# The ref begins at the first `@` or `#` of what remains; everything before it
-# is the `[<org>/]<repo>` name. Splitting there (rather than on `/`) keeps
-# branch names that contain slashes intact.
-#
-# Returns { slug, ref: "@<ref>" | "#<pr>" | null, dir: string | null }.
+# The ref starts at the first `@` or `#`, so a branch name may contain slashes.
 def parse-repo-spec [spec: string]: nothing -> record {
   let split = (split-dest $spec)
   let rest = $split.rest
@@ -112,11 +89,8 @@ def parse-repo-spec [spec: string]: nothing -> record {
   { slug: $slug, ref: $ref, dir: $split.dir }
 }
 
-# Cut a trailing `=<dir>` off a repo spec, returning { rest, dir }.
-#
-# The destination is a single directory name directly under the workspace:
-# `workspace-repos` finds repos one level down, so a nested path would hide the
-# clone from every command that walks the workspace.
+# Cut at the last `=`, so a branch name may contain one. The destination must
+# be one level down, where `workspace-repos` looks.
 def split-dest [spec: string]: nothing -> record {
   let cut = ($spec | str index-of --end "=")
   if $cut < 0 { return { rest: $spec, dir: null } }
@@ -146,9 +120,6 @@ def split-dest [spec: string]: nothing -> record {
   { rest: $rest, dir: $dir }
 }
 
-# Check out a ref inside a freshly cloned repo. `@<name>` is a tag or branch
-# (git checkout handles both, DWIM-tracking a remote branch); `#<num>` is a PR
-# checked out via `gh pr checkout` from within the repo.
 def checkout-ref [repo: path, ref: string]: nothing -> nothing {
   let value = ($ref | str substring 1..)
   if ($ref | str starts-with "#") {
@@ -162,16 +133,11 @@ def checkout-ref [repo: path, ref: string]: nothing -> nothing {
 
 const CLONE_HISTORY_WINDOW = 90day
 
-# Clone one repo, truncating history to the last $CLONE_HISTORY_WINDOW.
+# A blobless clone fetches old file contents on demand, so reading them offline
+# fails.
 #
-# `--filter=blob:none` skips file contents that only exist in history, so a
-# large blob committed and later reverted is never downloaded. Blobs the
-# checkout needs still come down during the clone, and anything else is fetched
-# on demand, so reading old file contents offline is the one thing that breaks.
-#
-# `--no-single-branch` keeps every branch tip fetched so a later `@<ref>` or
-# `#<pr>` checkout resolves. `--shallow-since` is a hard error when the remote
-# has no commits in the window, so fall back to full history in that case.
+# `--no-single-branch` lets a later `@<ref>` or `#<pr>` checkout resolve.
+# `--shallow-since` fails when the window has no commits, hence the fallback.
 def clone-repo [slug: string, target: path, full: bool]: nothing -> nothing {
   if $full {
     ^gh repo clone $slug $target
