@@ -3,12 +3,7 @@ use $UTIL *
 
 # Open a workspace's metadata file in your editor, creating it if there is none
 #
-# The file is the `.workspace.meta.<format>` that `workspace info` reports as
-# `metadata`; see there for what belongs in it. A workspace without one gets a
-# commented `.workspace.meta.yaml`, which parses as no metadata until filled in.
-#
-# $EDITOR wins over $VISUAL. Defaults to the current workspace; pass --choose
-# to pick one.
+# See `workspace info` for what belongs in it.
 #
 #   workspace metadata        # edit this workspace's metadata
 #   workspace metadata -c     # pick the workspace first

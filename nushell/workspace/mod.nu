@@ -1,21 +1,13 @@
 # Workspace management commands.
 #
-# A "Workspace" is a direct subdirectory of the workspaces root. Inside a
-# workspace you clone the repos needed for a given task (e.g. a Linear ticket)
-# and operate on all of them at once.
+# A workspace is a directory under the workspaces root holding the repos for
+# one task, operated on together.
 #
-# Typical flow:
-#   workspace new ABC-123 web-app api-service          # create + clone
-#   workspace in-each {|| git fetch origin main:main; git rebase main --autostash}
-#   workspace in-each {|| git checkout -b abc-123-fix}
+#   workspace new ABC-123 web-app api-service   # create + clone
+#   workspace branch new abc-123-fix
+#   workspace branch sync
 #   workspace list
-#
-# Reload after editing these files:
-#   workspace use
 
-# One command per file, re-exported here. A file's `main` takes the file's own
-# name, so `info.nu` is `workspace info`; a directory of commands nests, so
-# `zellij/attach.nu` is `workspace zellij attach`.
 export use root.nu *
 export use list.nu *
 export use info.nu *

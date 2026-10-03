@@ -3,9 +3,6 @@ use $UTIL *
 
 # Forget a workspace's saved Zellij session, optionally deleting the session too
 #
-# Removes the `.zellij_session` file, then, if a matching session exists,
-# prompts to delete it entirely (killed if running, resurrectable state dropped).
-#
 #   workspace zellij delete        # current workspace
 #   workspace zellij delete -c     # pick one
 export def main [
@@ -13,7 +10,6 @@ export def main [
 ]: nothing -> nothing {
   let target = (select-zellij-target $choose)
   let session = $target.session
-  # Orphans have no saved `.zellij_session` to forget; skip that bookkeeping.
   if $target.dir != null {
     let saved = (read-session-name $target.dir)
     remove-session-name $target.dir

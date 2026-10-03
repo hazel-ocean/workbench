@@ -3,25 +3,16 @@ use $UTIL *
 
 use shared.nu *
 
-# Message on the stash `branch sync` takes, so a pop only ever restores its own.
+# So a pop only ever restores this command's own stash.
 const STASH_MARK = "workspace-branch-sync"
 
 # Fetch each repo's base and rebase onto it, following stacks
 #
-# The base comes from the record, the branch's open PR, or the repo default, in
-# that order; `workspace branch base` reports which. On the default branch there
-# is nothing to rebase, so the branch is fast-forwarded instead, which is the
-# common case for the repos in a workspace that are not stacked.
+# `workspace branch base` shows which base each repo uses. The default branch
+# is fast-forwarded instead.
 #
-# A stack is rebased bottom-up, each branch onto the parent that was just moved,
-# using the recorded base sha so a parent that was itself rebased does not make
-# its children replay its commits.
-#
-# Local changes are stashed once per repo and restored at the end. A conflict
-# stops that repo, leaves the rebase for you to resolve, and says so; the other
-# repos carry on.
-#
-# Outside a workspace it acts on the git repo you are in, and warns that it did.
+# A conflict stops that repo and leaves the rebase for you to resolve. The
+# other repos carry on.
 #
 #   workspace branch sync            # every repo in the workspace
 #   workspace branch sync --dry-run  # what it would do, fetching nothing
@@ -35,20 +26,16 @@ export def main [
   target-repos $choose $repo "syncing" | par-each --keep-order {|r| sync-repo $r $onto $dry_run }
 }
 
-# True while a rebase is stopped part-way in this repo.
 def rebase-in-progress [repo: path]: nothing -> bool {
   let dir = (^git -C $repo rev-parse --absolute-git-dir | str trim)
   ["rebase-merge" "rebase-apply"] | any {|d| ($dir | path join $d | path exists) }
 }
 
-# Uncommitted changes to tracked files. Untracked files survive a rebase, so
-# they are not worth stashing.
+# Untracked files survive a rebase, so they are not stashed.
 def tracked-dirty [repo: path]: nothing -> bool {
   ^git -C $repo status --porcelain --untracked-files=no | str trim | is-not-empty
 }
 
-# Restore this command's own stash, identified by its message. Returns false
-# when the top of the stash is something else, which leaves it untouched.
 def stash-pop [repo: path]: nothing -> bool {
   let top = (^git -C $repo stash list -1 --format=%gs | complete)
   if $top.exit_code != 0 or (not ($top.stdout | str contains $STASH_MARK)) {
@@ -57,8 +44,7 @@ def stash-pop [repo: path]: nothing -> bool {
   (^git -C $repo stash pop | complete).exit_code == 0
 }
 
-# `branch-chain`, with a cycle or an over-deep chain returned rather than raised,
-# so one malformed repo does not end a workspace-wide run.
+# So one malformed repo does not end a workspace-wide run.
 def safe-chain [
   repo: path
   branch: string
@@ -78,13 +64,10 @@ def rev [repo: path, ref: string]: nothing -> oneof<string, nothing> {
   if $out.exit_code != 0 { null } else { $out.stdout | str trim }
 }
 
-# True when `ancestor` is already contained in `ref`, i.e. there is nothing to
-# rebase or fast-forward.
 def contains-ref [repo: path, ancestor: string, ref: string]: nothing -> bool {
   (^git -C $repo merge-base --is-ancestor $ancestor $ref | complete).exit_code == 0
 }
 
-# Sync one repo: resolve the chain, fetch its root, rebase bottom-up.
 def sync-repo [
   repo: path
   onto: oneof<string, nothing>
@@ -100,8 +83,7 @@ def sync-repo [
     action: null
     reason: null
   }
-  # A stopped rebase also detaches HEAD, so it has to be reported before the
-  # detached-HEAD case or it comes back as the wrong reason.
+  # A stopped rebase also detaches HEAD, so check it first.
   if (rebase-in-progress $repo) {
     return ($base_row | merge { branch: "rebasing", reason: "a rebase is already in progress" })
   }
@@ -118,8 +100,7 @@ def sync-repo [
   }
   let chain = $resolved.chain
 
-  # An empty chain means the branch has no base: either it is the default
-  # branch, which is fetched and fast-forwarded, or nothing resolved at all.
+  # An empty chain is the default branch, or a branch where nothing resolved.
   let root = if $onto != null {
     $onto
   } else if ($chain | is-empty) {
@@ -163,8 +144,7 @@ def sync-repo [
   } else {
     rebase-chain $repo $chain $root $remote
   }
-  # A conflict leaves the rebase in place to resolve, so the stash stays put
-  # too: popping it onto a half-applied tree would tangle the two.
+  # Popping onto a half-applied rebase would tangle the two.
   let restored = if $stashed and $outcome.action != "conflict" {
     stash-pop $repo
   } else {
@@ -179,13 +159,11 @@ def sync-repo [
   }
 }
 
-# Turn a failed fetch into something readable, keeping git's last line.
 def fetch-reason [root: string, stderr: string]: nothing -> string {
   let last = ($stderr | str trim | lines | where {|l| ($l | str trim) != "" } | last)
   $"could not fetch '($root)': ($last)"
 }
 
-# On the default branch there is nothing to rebase; move it up to origin.
 def fast-forward-current [repo: path, branch: string, remote: string]: nothing -> record {
   if (contains-ref $repo $remote $branch) {
     return { action: "up-to-date", reason: null }
@@ -197,25 +175,20 @@ def fast-forward-current [repo: path, branch: string, remote: string]: nothing -
   { action: "fast-forwarded", reason: null }
 }
 
-# Rebase every link of a stack, lowest first, each onto the parent just moved.
+# Lowest link first, so each parent has moved before its child replays onto it.
+# The recorded base sha keeps a child from replaying a rebased parent's commits.
 def rebase-chain [
   repo: path
   chain: table
   root: string
   remote: string
 ]: nothing -> record {
-  # `chain` runs tip first; a rebase has to start from the bottom so each parent
-  # has already moved by the time its child replays onto it.
   let links = ($chain | reverse)
   mut moved = 0
   for i in 0..<($links | length) {
     let link = ($links | get $i)
-    # Only the lowest link rebases onto the remote; the rest follow the local
-    # branch this loop has already rebased.
     let parent = if $i == 0 { $remote } else { $link.base }
-    # The name recorded has to be the branch the sha came from. Under --onto
-    # that is the forced root, not what the chain used to say, or the record
-    # would pair one branch's name with another branch's tip.
+    # Under --onto, the sha comes from the forced root, so record that name.
     let recorded = if $i == 0 { $root } else { $link.base }
     let tip = (rev $repo $parent)
     if $tip == null {
@@ -248,9 +221,7 @@ def rebase-chain [
   }
 }
 
-# Move the local root branch up to origin, so `main` is not left behind after
-# its stack has been rebased onto the fetched tip. Only ever a fast-forward,
-# and never the branch currently checked out.
+# So `main` is not left behind the stack rebased onto its fetched tip.
 def fast-forward-root [repo: path, root: string, remote: string]: nothing -> nothing {
   if not (local-branch-exists $repo $root) { return }
   if (current-branch $repo) == $root { return }

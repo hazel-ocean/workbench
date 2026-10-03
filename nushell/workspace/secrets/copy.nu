@@ -5,14 +5,9 @@ use shared.nu *
 
 # Copy gitignored files from the secrets store into the workspace's repos
 #
-# The store is $env.WORKBENCH_SECRETS_ROOT, `secrets/` at the workbench root by
-# default. A repo's files live under `<org>/<repo>/`, named by its origin
-# remote, and a file's path under that tree is where it lands in the repo.
-#
-# Pick files from a list, then name each one. Enter keeps the name; typing one
-# renames it, as when `.env.staging` should land as `.env`. A file git tracks is
-# never replaced. An unignored destination, or an existing file that differs,
-# asks first.
+# The store is $env.WORKBENCH_SECRETS_ROOT. A file at `<org>/<repo>/<path>`
+# lands at `<path>` in that repo. Each pick can be renamed, as when
+# `.env.staging` should land as `.env`. A tracked file is never replaced.
 #
 #   workspace secrets copy              # every repo in the workspace
 #   workspace secrets copy --repo api   # one repo

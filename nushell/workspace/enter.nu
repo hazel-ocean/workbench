@@ -3,9 +3,6 @@ use $UTIL *
 
 # cd into an existing workspace without attaching to Zellij
 #
-# Same matching and display as `workspace attach`, but does not attach to
-# the workspace's Zellij session (if one exists).
-#
 #   workspace enter ABC-123   # exact
 #   workspace enter api       # substring; picks if more than one matches
 #   workspace enter           # pick interactively

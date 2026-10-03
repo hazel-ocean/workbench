@@ -2,12 +2,7 @@ use remove.nu *
 
 # Permanently delete workspaces and everything inside them
 #
-# Pass a name or partial, or omit it to pick from all. An exact name or unique
-# substring resolves directly; anything ambiguous (or a no-match fall back to
-# all) opens a fuzzy multi-select. Unless --force is given, the selection's
-# contents are listed (including hidden files, flagging uncommitted work) and
-# confirmed first. This is irreversible; use `workspace trash` to keep the
-# directories recoverable.
+# Irreversible. Use `workspace trash` to keep the directories recoverable.
 #
 #   workspace delete ABC-123          # exact
 #   workspace delete api              # substring; multi-select if ambiguous

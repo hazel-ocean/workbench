@@ -1,6 +1,4 @@
 # Zellij session management for workspaces.
-#
-# Commands to attach to, create, rename, and manage Zellij sessions per workspace.
 
 export use attach.nu *
 export use delete.nu *
@@ -9,9 +7,8 @@ export use rename.nu *
 
 # Attach to (or create) this workspace's Zellij session
 #
-# Shorthand for `workspace zellij attach`. When the shell is already inside a
-# Zellij session there's nothing to attach to, so it just reports the session;
-# pass --choose to pick a different workspace or orphan session anyway.
+# Shorthand for `workspace zellij attach`. Inside a session it only reports the
+# session, unless --choose is given.
 export def --env main [
   --choose (-c)             # Pick a workspace or orphan session interactively
 ]: nothing -> nothing {

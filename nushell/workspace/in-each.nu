@@ -3,9 +3,6 @@ use $UTIL *
 
 # Run a closure inside each repo of a workspace
 #
-# The closure runs with the repo directory as the working directory, so git
-# and other tools operate on that repo. Defaults to the current workspace.
-#
 #   workspace in-each {|| git fetch origin main:main; git rebase main --autostash}
 #   workspace in-each --parallel {|| ^git status --short}
 export def main [
