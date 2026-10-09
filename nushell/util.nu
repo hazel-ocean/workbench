@@ -73,7 +73,7 @@ export def prompt-session-name [
 
 export def confirm-prompt [message: string]: nothing -> bool {
   print --no-newline $"($message) \(y/N\) > "
-  let key = ((input listen --timeout 20sec --types [key]).code? | default "")
+  let key = ((input listen --types [key]).code? | default "")
   print $key  # `input listen` does not echo
   ($key | str lowercase) == "y"
 }
