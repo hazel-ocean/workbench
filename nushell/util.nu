@@ -802,13 +802,18 @@ def dua-rows [...args: string]: nothing -> table {
   | each {|row| { path: $row.path size: ($row.bytes | into filesize) } }
 }
 
-# Workspace name to total size.
-def workspace-sizes [names: list<string>]: nothing -> record {
+# Workspace name to its `workspace-entry-sizes` table.
+def workspace-usage [names: list<string>]: nothing -> record {
   $names
-  | par-each {|n|
-    { $n: (workspace-entry-sizes $n | get size | math sum | default 0b) }
-  }
+  | par-each {|n| { $n: (workspace-entry-sizes $n) } }
   | reduce --fold {} {|it, acc| $acc | merge $it }
+}
+
+def usage-total [entries?: table]: nothing -> oneof<filesize, nothing> {
+  match $entries {
+    null => null
+    _ => ($entries | get size | math sum | default 0b)
+  }
 }
 
 def size-suffix [size?: filesize]: nothing -> string {
@@ -828,11 +833,11 @@ def match-workspaces [query: string, pool: list<string>]: nothing -> list<string
 
 def print-workspace-contents [
   name: string
-  size?: filesize
+  usage?: table   # From `workspace-entry-sizes`; omit to hide sizes
 ]: nothing -> nothing {
   let dir = (workspace-dir $name)
   if $name == (workspace-home) {
-    print $"  (ansi cyan)($name)(ansi reset)(size-suffix $size) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
+    print $"  (ansi cyan)($name)(ansi reset)(size-suffix (usage-total $usage)) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
     let saved = (read-session-name $dir)
     if $saved != null {
       print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
@@ -850,7 +855,7 @@ def print-workspace-contents [
   } else {
     $" (ansi red)[($in | str join '; ')](ansi reset)"
   })
-  print $"  (ansi cyan)($name)(ansi reset)(size-suffix $size)($note)"
+  print $"  (ansi cyan)($name)(ansi reset)(size-suffix (usage-total $usage))($note)"
   let saved = (read-session-name $dir)
   if $saved != null {
     print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
@@ -869,7 +874,8 @@ def print-workspace-contents [
     } else {
       ""
     }
-    print $"    ($base)($detail)"
+    let size = ($usage | default [] | where path == $entry.name | get 0?.size)
+    print $"    ($base)(size-suffix $size)($detail)"
   }
 }
 
@@ -904,8 +910,8 @@ export def select-workspaces [
   let candidates = if ($matches | is-empty) { $all } else { $matches }
   let direct = ($query != null) and (($matches | length) == 1)
 
-  let sizes = if $show_size and (tool-installed "dua") {
-    workspace-sizes ($candidates | where $it in $ws_names)
+  let usage = if $show_size and (tool-installed "dua") {
+    workspace-usage ($candidates | where $it in $ws_names)
   } else {
     {}
   }
@@ -925,7 +931,7 @@ export def select-workspaces [
         let state = ($orphans | where name == $n | get 0?.state)
         $"(paint-state $n $state false) (ansi dark_gray)\(orphan\)(ansi reset)"
       }
-      { name: $n, label: $"($label)(size-suffix ($sizes | get --optional $n))" }
+      { name: $n, label: $"($label)(size-suffix (usage-total ($usage | get --optional $n)))" }
     })
     let disp = {|it| $it.label }
     if $multi {
@@ -943,12 +949,12 @@ export def select-workspaces [
   if $list_contents {
     print $prompt
     for name in $selection {
-      print-workspace-contents $name ($sizes | get --optional $name)
+      print-workspace-contents $name ($usage | get --optional $name)
     }
   } else if $confirm {
     print $prompt
     for name in $selection {
-      print $"  ($name)(size-suffix ($sizes | get --optional $name))"
+      print $"  ($name)(size-suffix (usage-total ($usage | get --optional $name)))"
     }
   }
 
