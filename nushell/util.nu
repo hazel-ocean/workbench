@@ -770,7 +770,6 @@ export def repo-summaries [name: string]: nothing -> table {
   workspace-repos $name | par-each --keep-order {|r| repo-summary $r }
 }
 
-# The size of each top-level entry in a workspace, measured by `dua`.
 export def workspace-entry-sizes [name: string]: nothing -> table {
   let dir = (workspace-dir $name)
   let home = ($name == (workspace-home))
@@ -802,7 +801,6 @@ def dua-rows [...args: string]: nothing -> table {
   | each {|row| { path: $row.path size: ($row.bytes | into filesize) } }
 }
 
-# Workspace name to its `workspace-entry-sizes` table.
 def workspace-usage [names: list<string>]: nothing -> record {
   $names
   | par-each {|n| { $n: (workspace-entry-sizes $n) } }
@@ -833,7 +831,7 @@ def match-workspaces [query: string, pool: list<string>]: nothing -> list<string
 
 def print-workspace-contents [
   name: string
-  usage?: table   # From `workspace-entry-sizes`; omit to hide sizes
+  usage?: table
 ]: nothing -> nothing {
   let dir = (workspace-dir $name)
   if $name == (workspace-home) {
@@ -891,7 +889,7 @@ export def select-workspaces [
   --list-contents                       # Print each selection's contents first
   --color-state                         # Color picker entries by their Zellij session state
   --with-orphans                        # Also offer orphan Zellij sessions as candidates
-  --show-size                           # Show each workspace's size after its name; needs dua
+  --show-size                           # Show each workspace's size after its name
   --prompt (-p): string = "Workspace:"  # Picker title + confirm/contents header
 ]: nothing -> list<string> {
   let ws_names = (workspace-names)
