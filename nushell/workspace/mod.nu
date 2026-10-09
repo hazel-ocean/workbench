@@ -7,9 +7,11 @@
 #   workspace branch new abc-123-fix
 #   workspace branch sync
 #   workspace list
+#   workspace disk-usage
 
 export use root.nu *
 export use list.nu *
+export use disk-usage.nu *
 export use info.nu *
 export use metadata.nu *
 export use new.nu *
