@@ -770,6 +770,54 @@ export def repo-summaries [name: string]: nothing -> table {
   workspace-repos $name | par-each --keep-order {|r| repo-summary $r }
 }
 
+# The size of each top-level entry in a workspace, measured by `dua`.
+export def workspace-entry-sizes [name: string]: nothing -> table {
+  let dir = (workspace-dir $name)
+  let home = ($name == (workspace-home))
+  # The home workspace is itself the repo, and it contains the workspaces root.
+  let inputs = if $home { [$dir] } else { ls --all $dir | get name }
+  let ignore = if $home {
+    [--ignore-dirs $env.WORKBENCH_WORKSPACES_ROOT]
+  } else {
+    []
+  }
+  let rows = match ($inputs | length) {
+    # `dua` with no inputs measures the cwd.
+    0 => []
+    _ => (dua-rows ...$ignore ...$inputs)
+  }
+  match ($inputs | length) {
+    # `dua` lists the children of a lone directory input, not the input.
+    1 => [{ path: $inputs.0 size: ($rows | get size | math sum | default 0b) }]
+    _ => $rows
+  }
+}
+
+def dua-rows [...args: string]: nothing -> table {
+  ^dua aggregate --format bytes --no-total --no-sort ...$args
+  | complete
+  | get stdout
+  | lines
+  | parse --regex '^\s*(?<bytes>\d+) b (?<path>.+)$'
+  | each {|row| { path: $row.path size: ($row.bytes | into filesize) } }
+}
+
+# Workspace name to total size.
+def workspace-sizes [names: list<string>]: nothing -> record {
+  $names
+  | par-each {|n|
+    { $n: (workspace-entry-sizes $n | get size | math sum | default 0b) }
+  }
+  | reduce --fold {} {|it, acc| $acc | merge $it }
+}
+
+def size-suffix [size?: filesize]: nothing -> string {
+  match $size {
+    null => ""
+    _ => $" (ansi dark_gray)\(($size)\)(ansi reset)"
+  }
+}
+
 def match-workspaces [query: string, pool: list<string>]: nothing -> list<string> {
   if $query in $pool {
     [$query]
@@ -778,10 +826,13 @@ def match-workspaces [query: string, pool: list<string>]: nothing -> list<string
   }
 }
 
-def print-workspace-contents [name: string]: nothing -> nothing {
+def print-workspace-contents [
+  name: string
+  size?: filesize
+]: nothing -> nothing {
   let dir = (workspace-dir $name)
   if $name == (workspace-home) {
-    print $"  (ansi cyan)($name)(ansi reset) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
+    print $"  (ansi cyan)($name)(ansi reset)(size-suffix $size) (ansi yellow)[meta: repo preserved; only the Zellij session is removed](ansi reset)"
     let saved = (read-session-name $dir)
     if $saved != null {
       print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
@@ -799,7 +850,7 @@ def print-workspace-contents [name: string]: nothing -> nothing {
   } else {
     $" (ansi red)[($in | str join '; ')](ansi reset)"
   })
-  print $"  (ansi cyan)($name)(ansi reset)($note)"
+  print $"  (ansi cyan)($name)(ansi reset)(size-suffix $size)($note)"
   let saved = (read-session-name $dir)
   if $saved != null {
     print $"    (ansi magenta)Zellij session: ($saved)(ansi reset)"
@@ -834,6 +885,7 @@ export def select-workspaces [
   --list-contents                       # Print each selection's contents first
   --color-state                         # Color picker entries by their Zellij session state
   --with-orphans                        # Also offer orphan Zellij sessions as candidates
+  --show-size                           # Show each workspace's size after its name; needs dua
   --prompt (-p): string = "Workspace:"  # Picker title + confirm/contents header
 ]: nothing -> list<string> {
   let ws_names = (workspace-names)
@@ -852,19 +904,28 @@ export def select-workspaces [
   let candidates = if ($matches | is-empty) { $all } else { $matches }
   let direct = ($query != null) and (($matches | length) == 1)
 
+  let sizes = if $show_size and (tool-installed "dua") {
+    workspace-sizes ($candidates | where $it in $ws_names)
+  } else {
+    {}
+  }
+
   let selection = if $direct {
     $matches
-  } else if $color_state {
+  } else {
     let home = (workspace-home)
     let items = ($candidates | each {|n|
-      if $n in $ws_names {
+      let label = if not $color_state {
+        $n
+      } else if $n in $ws_names {
         let saved = (read-session-name (workspace-dir $n))
         let state = (if ($saved | is-not-empty) { session-state $saved $sessions })
-        { name: $n, label: (paint-state $n $state ($n == $home)) }
+        paint-state $n $state ($n == $home)
       } else {
         let state = ($orphans | where name == $n | get 0?.state)
-        { name: $n, label: $"(paint-state $n $state false) (ansi dark_gray)\(orphan\)(ansi reset)" }
+        $"(paint-state $n $state false) (ansi dark_gray)\(orphan\)(ansi reset)"
       }
+      { name: $n, label: $"($label)(size-suffix ($sizes | get --optional $n))" }
     })
     let disp = {|it| $it.label }
     if $multi {
@@ -873,11 +934,6 @@ export def select-workspaces [
       let one = ($items | input list --fuzzy --display $disp $prompt)
       if $one == null { [] } else { [$one.name] }
     }
-  } else if $multi {
-    $candidates | input list --multi --fuzzy $prompt
-  } else {
-    let one = ($candidates | input list --fuzzy $prompt)
-    if $one == null { [] } else { [$one] }
   }
 
   if ($selection | is-empty) {
@@ -886,10 +942,14 @@ export def select-workspaces [
 
   if $list_contents {
     print $prompt
-    for name in $selection { print-workspace-contents $name }
+    for name in $selection {
+      print-workspace-contents $name ($sizes | get --optional $name)
+    }
   } else if $confirm {
     print $prompt
-    for name in $selection { print $"  ($name)" }
+    for name in $selection {
+      print $"  ($name)(size-suffix ($sizes | get --optional $name))"
+    }
   }
 
   if $confirm {

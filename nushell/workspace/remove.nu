@@ -10,9 +10,9 @@ export def --env remove-workspaces [
 ]: nothing -> nothing {
   let verb = if $trash { "trash" } else { "delete" }
   let targets = if $force {
-    select-workspaces $query --multi --prompt $"Workspaces to ($verb):"
+    select-workspaces $query --multi --show-size --prompt $"Workspaces to ($verb):"
   } else {
-    select-workspaces $query --multi --confirm --list-contents --prompt $"Workspaces to ($verb):"
+    select-workspaces $query --multi --confirm --list-contents --show-size --prompt $"Workspaces to ($verb):"
   }
 
   if ($targets | is-empty) {
