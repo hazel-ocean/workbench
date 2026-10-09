@@ -37,6 +37,7 @@ workspace trash sms                                  # same, but route through t
 workspace zellij attach                              # attach to / create a zellij session for the workspace
 workspace list                                       # all workspaces, with zellij session + metadata
 workspace info                                       # one workspace: session, repos, metadata
+workspace disk-usage                                 # dua size of every workspace, with per-repo sizes (alias: wdu)
 workspace metadata                                   # edit this workspace's metadata in $EDITOR
 workspace root                                       # workspaces root path
 workspace secrets copy                               # copy gitignored files in from secrets/
