@@ -4,7 +4,7 @@ use zellij
 #
 # Alias for `workspace zellij rename`.
 export def --env main [
-  new?: string              # New session name; omit to reconcile only
+  new?: string              # New session name; omit to be asked
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   zellij rename $new --choose=$choose
