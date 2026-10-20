@@ -3,14 +3,14 @@ use $UTIL *
 
 # Rename a workspace's Zellij session, or reconcile a rename made in Zellij itself
 #
-# Only a running session can be renamed. Without a name, it offers to update the
-# saved name and the Ghostty tab title to match the live session.
+# Only a running session can be renamed. It also offers to update the saved name
+# and the Ghostty tab title to match the live session.
 #
 #   workspace rename my-new-name   # rename the live session
-#   workspace rename               # reconcile saved state + Ghostty title
-#   workspace rename -c            # reconcile a chosen workspace
+#   workspace rename               # ask for the name, then reconcile
+#   workspace rename -c            # the same for a chosen workspace
 export def --env main [
-  new?: string              # New session name; omit to reconcile only
+  new?: string              # New session name; omit to be asked
   --choose (-c)             # Pick a workspace interactively instead of using the current one
 ]: nothing -> nothing {
   let name = (select-workspace $choose)
@@ -34,23 +34,29 @@ export def --env main [
     }
   }
 
-  if $new != null {
-    if ($new | is-empty) or ($new == $saved) {
-      if not $acted { print "Nothing to do." }
-      return
-    }
+  mut target = $new
+  if $target == null and (zellij-session-exists $saved) {
+    $target = (prompt-session-name "Rename the Zellij session:" --default $saved)
+  }
+
+  if ($target | is-not-empty) and $target != $saved {
     if not (zellij-session-exists $saved) {
       print $"No Zellij session '($saved)' to rename."
       return
     }
-    if not (zellij-rename-session $saved $new) { return }
-    save-session-name $dir $new
-    sync-clawd-session-id $saved $new
-    if (($env.ZELLIJ_SESSION_NAME? | default "") == $saved) {
-      $env.ZELLIJ_SESSION_NAME = $new
+    loop {
+      if (zellij-rename-session $saved $target) { break }
+      $target = (prompt-session-name
+        "Zellij couldn't rename that session. Enter a different name:")
+      if ($target | is-empty) { print "Cancelled."; return }
     }
-    print $"(ansi green)renamed Zellij session '($saved)' -> '($new)'(ansi reset)"
-    $saved = $new
+    save-session-name $dir $target
+    sync-clawd-session-id $saved $target
+    if (($env.ZELLIJ_SESSION_NAME? | default "") == $saved) {
+      $env.ZELLIJ_SESSION_NAME = $target
+    }
+    print $"(ansi green)renamed Zellij session '($saved)' -> '($target)'(ansi reset)"
+    $saved = $target
     $acted = true
   }
 
