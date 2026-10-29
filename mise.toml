@@ -1,8 +1,3 @@
-# bd discovery stops at a git repo boundary, so a checkout under workspaces/
-# cannot find the database at this root on its own.
-[env]
-BEADS_DIR = "{{config_root}}/.beads"
-
 [tasks]
 shell = {
     description = "Open Nushell with the workspace overlay loaded",
