@@ -3,3 +3,4 @@ workspaces/*
 /secrets/
 .zellij_session
 .env
+.beads*
