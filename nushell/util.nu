@@ -7,16 +7,19 @@ export def workspace-home []: nothing -> string {
 }
 
 export def workspace-dir [name: string]: nothing -> path {
+  let extras = (extra-workspaces)
   if $name == (workspace-home) {
     $env.WORKBENCH_WORKSPACES_ROOT | path dirname
+  } else if $name in $extras {
+    $extras | get $name
   } else {
     $env.WORKBENCH_WORKSPACES_ROOT | path join $name
   }
 }
 
 # Git can't track an empty directory, so a fresh clone has no workspaces root.
-export def workspace-names []: nothing -> list<string> {
-  let subdirs = if ($env.WORKBENCH_WORKSPACES_ROOT | path exists) {
+def root-workspace-names []: nothing -> list<string> {
+  if ($env.WORKBENCH_WORKSPACES_ROOT | path exists) {
     ls $env.WORKBENCH_WORKSPACES_ROOT
     | where type == dir
     | get name
@@ -25,7 +28,57 @@ export def workspace-names []: nothing -> list<string> {
   } else {
     []
   }
-  ([(workspace-home)] ++ $subdirs) | sort --ignore-case
+}
+
+# A missing directory is skipped, so one config can serve several machines.
+# Nushell converts only PATH-like variables listed in ENV_CONVERSIONS, so the
+# value can arrive as a string or a list.
+export def extra-workspaces []: nothing -> record {
+  let raw = ($env.WORKBENCH_EXTRA_WORKSPACE_DIRS? | default [])
+  let entries = match ($raw | describe | str replace -r '<.*' '') {
+    "list" => $raw
+    _ => ($raw | split row (char esep))
+  }
+  let dirs = (
+    $entries
+    | each {|e| $e | str trim }
+    | where {|e| $e != "" }
+    | each {|e| $e | path expand }
+    | where {|d| ($d | path type) == "dir" }
+    | uniq
+  )
+  let taken = ([(workspace-home)] ++ (root-workspace-names))
+  let clashes = (
+    $dirs
+    | where {|d| ($d | path basename) in $taken }
+  )
+  let dupes = (
+    $dirs
+    | group-by { path basename }
+    | transpose name dirs
+    | where {|g| ($g.dirs | length) > 1 }
+    | get dirs
+    | flatten
+  )
+  let bad = ($clashes ++ $dupes | uniq)
+  if ($bad | is-not-empty) {
+    error make --unspanned {
+      msg: $"Extra workspace names clash: ($bad | str join ', ')"
+      code: "workspace::extra_name_clash"
+      help: "A workspace name is its directory's basename. Remove or rename the clashing entries in WORKBENCH_EXTRA_WORKSPACE_DIRS."
+    }
+  }
+  $dirs
+  | reduce --fold {} {|d, acc| $acc | insert ($d | path basename) $d }
+}
+
+export def workspace-names []: nothing -> list<string> {
+  (
+    [(workspace-home)]
+    ++ (root-workspace-names)
+    ++ (extra-workspaces | columns)
+  )
+  | sort --ignore-case
 }
 
 # `complete` traps a non-zero exit but not a missing binary, so check this
@@ -435,6 +488,18 @@ export def try-infer-workspace []: nothing -> oneof<string, nothing> {
   if ($pwd != $ws_root) and ($pwd | str starts-with ($ws_root | path join "")) {
     return ($pwd | path relative-to $ws_root | path split | first)
   }
+  # Longest match first, since an extra dir may sit inside another, or
+  # inside the workbench root.
+  let extra = (
+    extra-workspaces
+    | transpose name dir
+    | where {|e| ($pwd == $e.dir) or ($pwd | str starts-with ($e.dir | path join "")) }
+    | sort-by --reverse { $in.dir | str length }
+    | get 0?.name
+  )
+  if $extra != null {
+    return $extra
+  }
   if ($pwd == $home_dir) or ($pwd | str starts-with ($home_dir | path join "")) {
     return (workspace-home)
   }
@@ -467,8 +532,12 @@ export def workspace-repos [name: string]: nothing -> list<path> {
       help: "Create it with `workspace new <name>`, or list them with `workspace list`."
     }
   }
+  let is_repo = ($dir | path join ".git" | path exists)
   if $name == (workspace-home) {
-    if ($dir | path join ".git" | path exists) { [$dir] } else { [] }
+    if $is_repo { [$dir] } else { [] }
+  } else if $is_repo {
+    # An extra workspace can be a repo itself.
+    [$dir]
   } else {
     ls $dir
     | where type == dir
@@ -1040,34 +1109,10 @@ export def select-zellij-target [choose: bool]: nothing -> record {
   }
 }
 
-# The git repo holding PWD, when PWD is outside every workspace.
-export def loose-repo []: nothing -> oneof<path, nothing> {
-  if (try-infer-workspace) != null { return null }
-  let out = (^git -C $env.PWD rev-parse --show-toplevel | complete)
-  if $out.exit_code != 0 { return null }
-  $out.stdout | str trim
-}
-
-# Outside a workspace, falls back to the enclosing git repo, so a plain
-# checkout such as nix-config works too.
 export def target-repos [
   choose: bool
   only: oneof<string, nothing>
-  verb: string   # What the command does, for the outside-a-workspace warning
 ]: nothing -> list<path> {
-  let loose = (if $choose { null } else { loose-repo })
-  if $loose != null {
-    let name = ($loose | path basename)
-    if $only != null and $only != $name {
-      error make --unspanned {
-        msg: $"No repo '($only)' here."
-        code: "workspace::unknown_repo"
-        help: $"Outside a workspace this acts on '($name)' alone."
-      }
-    }
-    print $"(ansi yellow)Not in a workspace; ($verb) only ($name)(ansi reset)"
-    return [$loose]
-  }
   let all = (workspace-repos (select-workspace $choose))
   if ($all | is-empty) {
     error make --unspanned {

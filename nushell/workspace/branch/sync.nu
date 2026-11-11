@@ -23,7 +23,7 @@ export def main [
   --onto: string        # Force this root base instead of the resolved one
   --dry-run (-n)        # Report the plan; fetch nothing, rebase nothing
 ]: nothing -> table {
-  target-repos $choose $repo "syncing" | par-each --keep-order {|r| sync-repo $r $onto $dry_run }
+  target-repos $choose $repo | par-each --keep-order {|r| sync-repo $r $onto $dry_run }
 }
 
 def rebase-in-progress [repo: path]: nothing -> bool {

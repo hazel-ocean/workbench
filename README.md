@@ -4,7 +4,8 @@ Nushell commands for per-task workspaces — one dir per Linear ticket, with the
 repos you need cloned inside, and pipelines to run commands across all of them.
 
 A *workspace* is a subdirectory of `$env.WORKBENCH_WORKSPACES_ROOT` (defaults to
-`./workspaces/`); a *repo* is a `.git`-containing subdirectory of a workspace.
+`./workspaces/`), or a directory listed in `$env.WORKBENCH_EXTRA_WORKSPACE_DIRS`;
+a *repo* is a `.git`-containing subdirectory of a workspace.
 
 Requires [`mise`](https://mise.jdx.dev) and [`gh`](https://cli.github.com);
 `mise` will install Nushell on first run.
@@ -138,11 +139,17 @@ scripted clone never blocks.
 
 ## Configuration
 
-|Env var                        |Default        |Purpose                         |
-|-------------------------------|---------------|--------------------------------|
-|`WORKBENCH_WORKSPACES_ROOT`    |`./workspaces/`|Where workspaces live           |
-|`WORKBENCH_DEFAULT_GITHUB_ORG` |unset          |Org prepended to bare repo names|
-|`WORKBENCH_SECRETS_ROOT`       |`./secrets/`   |Where `workspace secrets` reads |
+|Env var                         |Default        |Purpose                         |
+|--------------------------------|---------------|--------------------------------|
+|`WORKBENCH_WORKSPACES_ROOT`     |`./workspaces/`|Where workspaces live           |
+|`WORKBENCH_DEFAULT_GITHUB_ORG`  |unset          |Org prepended to bare repo names|
+|`WORKBENCH_SECRETS_ROOT`        |`./secrets/`   |Where `workspace secrets` reads |
+|`WORKBENCH_EXTRA_WORKSPACE_DIRS`|unset          |Extra workspaces, `:`-separated |
+
+Each entry in `WORKBENCH_EXTRA_WORKSPACE_DIRS` is one workspace, named by its
+basename. A directory that is itself a repo, such as `~/.config/nix-config`, is
+a workspace with one repo. A missing directory is skipped. Two entries with the
+same basename, or one that matches a workspace under the root, are an error.
 
 Loading the overlay sources `.env` from the repo root, which is untracked and
 machine-local. Copy the example and edit it (`cp .env.example .env`) so bare

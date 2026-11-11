@@ -15,7 +15,7 @@ export def main [
   --choose (-c)         # Pick a workspace interactively instead of using the current one
   --repo (-r): string   # Copy into this repo only, by directory name
 ]: nothing -> table {
-  let repos = (target-repos $choose $repo "copying into")
+  let repos = (target-repos $choose $repo)
   let files = ($repos | each {|r| secret-files $r } | flatten)
   if ($files | is-empty) {
     let looked = ($repos | each {|r|

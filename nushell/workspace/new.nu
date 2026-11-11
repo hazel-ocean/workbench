@@ -8,7 +8,7 @@ export def --env main [
   ...repos: string   # Repos to clone immediately: [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]
   --full             # Clone complete history and all blobs instead of a shallow blobless clone
 ]: nothing -> nothing {
-  let dir = ($env.WORKBENCH_WORKSPACES_ROOT | path join $name)
+  let dir = (workspace-dir $name)
   if ($dir | path exists) {
     print $"(ansi yellow)workspace ($name) already exists(ansi reset)"
   } else {
