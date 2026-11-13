@@ -12,9 +12,21 @@ use $UTIL *
 #   obsidian-link: "[Feature notes](obsidian://open?vault=Notes&file=Projects/feature)"
 #   things-link: things:///show?id=ABC123
 export def main [
-  --choose (-c)   # Pick a workspace interactively instead of using the current one
+  workspace?: string@workspace-names # Workspace name or partial; omit to use the current one
+  --choose (-c)                      # Pick a workspace interactively instead of using the current one
 ]: nothing -> record {
-  let name = (select-workspace $choose)
+  let name = if $workspace == null {
+    select-workspace $choose
+  } else {
+    let sel = (select-workspaces $workspace)
+    if ($sel | is-empty) {
+      error make --unspanned {
+        msg: "Nothing selected."
+        code: "workspace::nothing_selected"
+      }
+    }
+    $sel | first
+  }
   let dir = (workspace-dir $name)
   let saved = (read-session-name $dir)
   let metadata = (linkify (workspace-metadata $dir))
