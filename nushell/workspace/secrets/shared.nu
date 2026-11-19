@@ -50,8 +50,13 @@ export def secret-files [repo: path]: nothing -> table {
   | update store (secrets-root)
 }
 
-export def copy-secrets [files: table]: nothing -> table {
-  print "Secrets in the store:"
+export def copy-secrets [
+  files: table                                 # Rows from `store-files`
+  --heading: string = "Secrets in the store:"
+  --writable                                   # Passed to `offer-file`
+]: nothing -> table {
+  if ($files | is-empty) { return [] }
+  print $"(ansi purple_bold)($heading)(ansi reset)"
   for root in ($files | get root | uniq) {
     print ($root | path basename)
     $files
@@ -61,7 +66,7 @@ export def copy-secrets [files: table]: nothing -> table {
     | each {|line| print $line }
     | ignore
   }
-  $files | each {|f| offer-file $f }
+  $files | each {|f| offer-file $f --writable=$writable }
 }
 
 # Each path is a list of segments. Order follows the input.

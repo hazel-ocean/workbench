@@ -173,7 +173,7 @@ Without a `default-github-org`, qualify every repo as `<org>/<repo>`.
 Running it on an existing workspace adds what is missing.
 
 - It offers each file in the `new.template` directory for the workspace root,
-  with the same prompt as `workspace secrets copy`. Without a terminal,
+  with the same tree and prompt as `workspace secrets copy`. Without a terminal,
   it skips the template. A copy gains the owner's write bit, since a
   template in the Nix store is read-only.
 - It clones the repos you name, then asks about each repo in `new.clone`

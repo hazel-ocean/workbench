@@ -79,6 +79,6 @@ def offer-template [dir: path, template: oneof<path, nothing>]: nothing -> nothi
     return
   }
   # A template from the Nix store is read-only.
-  let rows = (store-files $template $dir | each {|f| offer-file $f --writable })
+  let rows = (copy-secrets (store-files $template $dir) --heading "Template files:" --writable)
   if ($rows | is-not-empty) { print ($rows | table) }
 }
