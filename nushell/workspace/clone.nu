@@ -6,7 +6,7 @@ use secrets/shared.nu *
 #
 # A bare repo name uses the config's default-github-org. Clones are shallow
 # (90 days) and blobless unless --full is given. When the secrets store holds
-# files for a repo, a picker offers to copy them in.
+# files for a repo, a prompt offers to copy each one.
 #
 #   workspace clone web-app
 #   workspace clone other-org/web-app

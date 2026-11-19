@@ -51,10 +51,42 @@ export def secret-files [repo: path]: nothing -> table {
 }
 
 export def copy-secrets [files: table]: nothing -> table {
-  let picked = ($files
-    | input list --multi --fuzzy --display {|f| $"($f.root | path basename)/($f.rel)" } "Secrets to copy:")
-  if ($picked | is-empty) { return [] }
-  $picked | each {|f| offer-file $f }
+  print "Secrets in the store:"
+  for root in ($files | get root | uniq) {
+    print ($root | path basename)
+    $files
+    | where root == $root
+    | each {|f| $f.rel | path split }
+    | tree-lines ""
+    | each {|line| print $line }
+    | ignore
+  }
+  $files | each {|f| offer-file $f }
+}
+
+# Each path is a list of segments. Order follows the input.
+def tree-lines [prefix: string]: list<list<string>> -> list<string> {
+  let paths = $in
+  let names = ($paths | each {|p| $p | first } | uniq)
+  let last = (($names | length) - 1)
+  $names
+  | enumerate
+  | each {|e|
+      let at_end = ($e.index == $last)
+      let branch = if $at_end { "└── " } else { "├── " }
+      let indent = if $at_end { "    " } else { "│   " }
+      let children = ($paths
+        | where {|p| ($p | first) == $e.item and ($p | length) > 1 }
+        | each {|p| $p | skip 1 })
+      let name = if ($children | is-empty) {
+        $"(ansi cyan)($e.item)(ansi reset)"
+      } else {
+        $e.item
+      }
+      [$"($prefix)($branch)($name)"]
+      | append ($children | tree-lines $"($prefix)($indent)")
+    }
+  | flatten
 }
 
 # Silent without a terminal, so a scripted clone never blocks.

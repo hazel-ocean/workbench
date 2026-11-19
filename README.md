@@ -122,8 +122,8 @@ The first two levels are the GitHub org and repo, matched against the clone's
 `origin` without regard to case. A clone in a renamed directory still finds its
 files. The rest of the path is where the file lands in the repo.
 
-`workspace secrets copy` lists the files for every repo in the workspace, or
-for one with `--repo`. Each file you pick gets a one-key prompt:
+`workspace secrets copy` prints a tree of the files for every repo in the
+workspace, or for one with `--repo`, then gives each file a one-key prompt:
 
 |Key          |Action                                            |
 |-------------|--------------------------------------------------|
@@ -140,9 +140,8 @@ The copy is verbatim, file mode included.
   commit it.
 - An existing file that differs asks before it is overwritten.
 
-`workspace clone` shows the same picker after each clone that has files in the
-store. Press Esc to skip it. It does not appear when stdin is no terminal, so a
-scripted clone never blocks.
+`workspace clone` does the same after each clone that has files in the store.
+It skips this when stdin is no terminal, so a scripted clone never blocks.
 
 ## Configuration
 
@@ -174,8 +173,8 @@ Without a `default-github-org`, qualify every repo as `<org>/<repo>`.
 Running it on an existing workspace adds what is missing.
 
 - It offers each file in the `new.template` directory for the workspace root,
-  with the same prompt as `workspace secrets copy` and no picker. Without a
-  terminal, it skips the template. A copy gains the owner's write bit, since a
+  with the same prompt as `workspace secrets copy`. Without a terminal,
+  it skips the template. A copy gains the owner's write bit, since a
   template in the Nix store is read-only.
 - It clones the repos you name, then asks about each repo in `new.clone`
   (Enter clones). It does not ask about a repo already in the workspace or one
