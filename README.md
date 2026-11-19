@@ -3,8 +3,8 @@
 Nushell commands for per-task workspaces — one dir per Linear ticket, with the
 repos you need cloned inside, and pipelines to run commands across all of them.
 
-A *workspace* is a subdirectory of `$env.WORKBENCH_WORKSPACES_ROOT` (defaults to
-`./workspaces/`), or a directory listed in `$env.WORKBENCH_EXTRA_WORKSPACE_DIRS`;
+A *workspace* is a subdirectory of the workspaces root (defaults to
+`./workspaces/`), or a directory listed in `extra-workspace-dirs`;
 a *repo* is a `.git`-containing subdirectory of a workspace.
 
 Requires [`mise`](https://mise.jdx.dev) and [`gh`](https://cli.github.com);
@@ -13,7 +13,8 @@ Requires [`mise`](https://mise.jdx.dev) and [`gh`](https://cli.github.com);
 ## Getting started
 
 ```sh
-cp .env.example .env    # then set your default GitHub org
+mkdir -p ~/.config/workbench
+cp config.example.toml ~/.config/workbench/config.toml   # then set your default GitHub org
 mise run shell          # Nushell with the overlay loaded
 ```
 
@@ -139,22 +140,33 @@ scripted clone never blocks.
 
 ## Configuration
 
-|Env var                         |Default        |Purpose                         |
-|--------------------------------|---------------|--------------------------------|
-|`WORKBENCH_WORKSPACES_ROOT`     |`./workspaces/`|Where workspaces live           |
-|`WORKBENCH_DEFAULT_GITHUB_ORG`  |unset          |Org prepended to bare repo names|
-|`WORKBENCH_SECRETS_ROOT`        |`./secrets/`   |Where `workspace secrets` reads |
-|`WORKBENCH_EXTRA_WORKSPACE_DIRS`|unset          |Extra workspaces, `:`-separated |
+Settings live in `~/.config/workbench/config.toml`, or under
+`$XDG_CONFIG_HOME` when it is set. `config.example.toml` is a starting point.
+Every key is optional, and a missing file means every default.
 
-Each entry in `WORKBENCH_EXTRA_WORKSPACE_DIRS` is one workspace, named by its
-basename. A directory that is itself a repo, such as `~/.config/nix-config`, is
-a workspace with one repo. A missing directory is skipped. Two entries with the
-same basename, or one that matches a workspace under the root, are an error.
+|Key                   |Default        |Purpose                         |
+|----------------------|---------------|--------------------------------|
+|`workspaces-root`     |`./workspaces/`|Where workspaces live           |
+|`default-github-org`  |unset          |Org prepended to bare repo names|
+|`secrets-root`        |`./secrets/`   |Where `workspace secrets` reads |
+|`extra-workspace-dirs`|`[]`           |Extra workspaces                |
 
-Loading the overlay sources `.env` from the repo root, which is untracked and
-machine-local. Copy the example and edit it (`cp .env.example .env`) so bare
-repo names resolve, or always qualify repos as `<org>/<repo>`. Variables already
-set in your environment take precedence over `.env`.
+A path may start with `~`. A relative path resolves against the workbench repo
+root. An unknown key or a value of the wrong type is an error. The file is read
+on every command, so an edit applies without reloading the overlay.
+
+Each entry in `extra-workspace-dirs` is one workspace, named by its basename. A
+directory that is itself a repo, such as `~/.config/nix-config`, is a workspace
+with one repo. A missing directory is skipped. Two entries with the same
+basename, or one that matches a workspace under the root, are an error.
+
+Without a `default-github-org`, qualify every repo as `<org>/<repo>`.
+
+Set `WORKBENCH_CONFIG` to read a different file for one command:
+
+```nu
+WORKBENCH_CONFIG=/tmp/scratch.toml workspace list
+```
 
 Clones are shallow and blobless: the last 90 days of history, and file contents
 only for what's checked out. Blobs that exist solely in history (an accidentally

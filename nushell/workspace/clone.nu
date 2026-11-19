@@ -4,7 +4,7 @@ use secrets/shared.nu *
 
 # Clone repos into a workspace via `gh`
 #
-# A bare repo name uses $env.WORKBENCH_DEFAULT_GITHUB_ORG. Clones are shallow
+# A bare repo name uses the config's default-github-org. Clones are shallow
 # (90 days) and blobless unless --full is given. When the secrets store holds
 # files for a repo, a picker offers to copy them in.
 #
@@ -76,12 +76,12 @@ def parse-repo-spec [spec: string]: nothing -> record {
   let slug = if ($name | str contains "/") {
     $name
   } else {
-    let org = $env.WORKBENCH_DEFAULT_GITHUB_ORG?
+    let org = (workbench-config).default-github-org
     if ($org | is-empty) {
       error make --unspanned {
         msg: $"No default org for bare repo '($name)'."
         code: "workspace::no_default_org"
-        help: $"Set WORKBENCH_DEFAULT_GITHUB_ORG in .env \(or the environment\), or qualify the repo as <org>/($name)."
+        help: $"Set default-github-org in ((workbench-config-file)), or qualify the repo as <org>/($name)."
       }
     }
     $"($org)/($name)"

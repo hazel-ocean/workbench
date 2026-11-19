@@ -6,7 +6,7 @@ use $UTIL *
 const IGNORED_NAMES = [".DS_Store"]
 
 export def secrets-root []: nothing -> path {
-  $env.WORKBENCH_SECRETS_ROOT | path expand
+  (workbench-config).secrets-root | path expand
 }
 
 # The origin remote, not the directory, names the store's tree, so a clone into

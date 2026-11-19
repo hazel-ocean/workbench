@@ -1,26 +1,115 @@
 # Helpers for the workspace commands. A plain `use` keeps them out of the
 # public `workspace` overlay.
 
+const REPO_ROOT = path self | path dirname | path dirname
+
+# An empty TOML array describes as list<any>.
+const CONFIG_TYPES = {
+  workspaces-root: [string]
+  secrets-root: [string]
+  default-github-org: [string]
+  extra-workspace-dirs: [list<string> list<any>]
+}
+
+export def workbench-config-file []: nothing -> path {
+  if ($env.WORKBENCH_CONFIG? | is-not-empty) {
+    return ($env.WORKBENCH_CONFIG | path expand --no-symlink)
+  }
+  let base = ($env.XDG_CONFIG_HOME? | default ($env.HOME | path join ".config"))
+  $base | path join "workbench" "config.toml"
+}
+
+# Read on every call, so an edit applies without reloading the overlay.
+# A missing file or key reads as the default. Paths come back absolute.
+export def workbench-config []: nothing -> record {
+  let file = (workbench-config-file)
+  let raw = if ($file | path exists) {
+    read-config $file
+  } else if ($env.WORKBENCH_CONFIG? | is-not-empty) {
+    error make --unspanned {
+      msg: $"Config file '($file)' does not exist."
+      code: "workspace::missing_config"
+      help: "Fix or unset WORKBENCH_CONFIG."
+    }
+  } else {
+    {}
+  }
+  {
+    workspaces-root: (
+      resolve-config-path ($raw.workspaces-root? | default "workspaces")
+    )
+    secrets-root: (resolve-config-path ($raw.secrets-root? | default "secrets"))
+    default-github-org: $raw.default-github-org?
+    extra-workspace-dirs: (
+      $raw.extra-workspace-dirs?
+      | default []
+      | each {|dir| resolve-config-path $dir }
+    )
+  }
+}
+
+def read-config [file: path]: nothing -> record {
+  let config = try {
+    open --raw $file | from toml
+  } catch {|err|
+    error make --unspanned {
+      msg: $"Cannot parse '($file)' as TOML."
+      code: "workspace::malformed_config"
+      help: ($err.details.help? | default $err.msg | str trim)
+    }
+  }
+  for key in ($config | columns) {
+    let accepted = ($CONFIG_TYPES | get --optional $key)
+    if $accepted == null {
+      error make --unspanned {
+        msg: $"Unknown key '($key)' in '($file)'."
+        code: "workspace::unknown_config_key"
+        help: $"Known keys: ($CONFIG_TYPES | columns | str join ', ')."
+      }
+    }
+    let actual = ($config | get $key | describe)
+    if $actual not-in $accepted {
+      error make --unspanned {
+        msg: $"Key '($key)' in '($file)' is a ($actual)."
+        code: "workspace::invalid_config_value"
+        help: $"Use a ($accepted | first)."
+      }
+    }
+  }
+  $config
+}
+
+def resolve-config-path [value: string]: nothing -> path {
+  let path = if ($value | str starts-with "~") {
+    $value
+  } else {
+    $REPO_ROOT | path join $value
+  }
+  $path | path expand --no-symlink
+}
+
 # The meta workspace's name: the workbench repo root's basename.
 export def workspace-home []: nothing -> string {
-  $env.WORKBENCH_WORKSPACES_ROOT | path dirname | path basename
+  (workbench-config).workspaces-root | path dirname | path basename
 }
 
 export def workspace-dir [name: string]: nothing -> path {
+  let root = (workbench-config).workspaces-root
   let extras = (extra-workspaces)
   if $name == (workspace-home) {
-    $env.WORKBENCH_WORKSPACES_ROOT | path dirname
+    $root | path dirname
   } else if $name in $extras {
     $extras | get $name
   } else {
-    $env.WORKBENCH_WORKSPACES_ROOT | path join $name
+    $root | path join $name
   }
 }
 
 # Git can't track an empty directory, so a fresh clone has no workspaces root.
 def root-workspace-names []: nothing -> list<string> {
-  if ($env.WORKBENCH_WORKSPACES_ROOT | path exists) {
-    ls $env.WORKBENCH_WORKSPACES_ROOT
+  let root = (workbench-config).workspaces-root
+  if ($root | path exists) {
+    ls $root
     | where type == dir
     | get name
     | each { $in | path basename }
@@ -31,18 +120,9 @@ def root-workspace-names []: nothing -> list<string> {
 }
 
 # A missing directory is skipped, so one config can serve several machines.
-# Nushell converts only PATH-like variables listed in ENV_CONVERSIONS, so the
-# value can arrive as a string or a list.
 export def extra-workspaces []: nothing -> record {
-  let raw = ($env.WORKBENCH_EXTRA_WORKSPACE_DIRS? | default [])
-  let entries = match ($raw | describe | str replace -r '<.*' '') {
-    "list" => $raw
-    _ => ($raw | split row (char esep))
-  }
   let dirs = (
-    $entries
-    | each {|e| $e | str trim }
-    | where {|e| $e != "" }
+    (workbench-config).extra-workspace-dirs
     | each {|e| $e | path expand }
     | where {|d| ($d | path type) == "dir" }
     | uniq
@@ -65,7 +145,7 @@ export def extra-workspaces []: nothing -> record {
     error make --unspanned {
       msg: $"Extra workspace names clash: ($bad | str join ', ')"
       code: "workspace::extra_name_clash"
-      help: "A workspace name is its directory's basename. Remove or rename the clashing entries in WORKBENCH_EXTRA_WORKSPACE_DIRS."
+      help: "A workspace name is its directory's basename. Remove or rename the clashing entries in extra-workspace-dirs, in ((workbench-config-file))."
     }
   }
   $dirs
@@ -482,7 +562,7 @@ export def zellij-attach-existing [session: string]: nothing -> nothing {
 }
 
 export def try-infer-workspace []: nothing -> oneof<string, nothing> {
-  let ws_root = ($env.WORKBENCH_WORKSPACES_ROOT | path expand)
+  let ws_root = ((workbench-config).workspaces-root | path expand)
   let home_dir = ($ws_root | path dirname)
   let pwd = ($env.PWD | path expand)
   if ($pwd != $ws_root) and ($pwd | str starts-with ($ws_root | path join "")) {
@@ -845,7 +925,7 @@ export def workspace-entry-sizes [name: string]: nothing -> table {
   # The home workspace is itself the repo, and it contains the workspaces root.
   let inputs = if $home { [$dir] } else { ls --all $dir | get name }
   let ignore = if $home {
-    [--ignore-dirs $env.WORKBENCH_WORKSPACES_ROOT]
+    [--ignore-dirs (workbench-config).workspaces-root]
   } else {
     []
   }

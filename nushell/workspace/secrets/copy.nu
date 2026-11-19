@@ -5,7 +5,7 @@ use shared.nu *
 
 # Copy gitignored files from the secrets store into the workspace's repos
 #
-# The store is $env.WORKBENCH_SECRETS_ROOT. A file at `<org>/<repo>/<path>`
+# The store is the config's secrets-root. A file at `<org>/<repo>/<path>`
 # lands at `<path>` in that repo. Each pick can be renamed, as when
 # `.env.staging` should land as `.env`. A tracked file is never replaced.
 #
