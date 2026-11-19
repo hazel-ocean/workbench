@@ -369,8 +369,9 @@ export def metadata-template [name: string]: nothing -> string {
   ([
     $"# Metadata for the ($name) workspace, reported by `workspace info`."
     "#"
-    "# The keys are yours. One ending in -link, -url or -uri is rendered as a"
-    "# clickable link, written either bare or as markdown: [label](uri)"
+    "# The keys are yours. One ending in -link, -url or -uri, or a plural of"
+    "# those, is rendered as a clickable link, written either bare or as"
+    "# markdown: [label](uri)"
     ""
     "# ticket-url: https://example.com/issue/ABC-123"
     '# notes-link: "[Design notes](obsidian://open?vault=Notes&file=Projects/x)"'
@@ -398,7 +399,7 @@ export def open-in-editor [file: path]: nothing -> nothing {
   ^$command ...($parts | skip 1) $file
 }
 
-const LINK_SUFFIXES = ["link", "url", "uri"]
+const LINK_SUFFIXES = ["link", "links", "url", "urls", "uri", "uris"]
 
 def link-key [key: string]: nothing -> bool {
   let lowered = ($key | str lowercase)

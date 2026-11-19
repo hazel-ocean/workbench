@@ -5,7 +5,8 @@ use $UTIL *
 #
 # `metadata` is the `.workspace.meta.<format>` file at the workspace root, in
 # any format nushell parses. It is absent when there is no file, so use
-# `get metadata?`. Keys ending in `-link`, `-url` or `-uri` render as links.
+# `get metadata?`. Keys ending in `-link`, `-url` or `-uri`, or a plural of
+# those, render as links.
 #
 #   # .workspace.meta.yaml
 #   linear-url: https://linear.app/acme/issue/ABC-123

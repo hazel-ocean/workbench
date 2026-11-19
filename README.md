@@ -92,7 +92,9 @@ so use `get metadata?` when a workspace may not have one.
 ### Links
 
 A key ending in `-link`, `-url` or `-uri`, or named just `link`/`url`/`uri`, is
-rendered as a clickable hyperlink, at any depth and through lists. Two forms:
+rendered as a clickable hyperlink, at any depth and through lists. The plurals
+(`-links`, `-urls`, `-uris`) work the same way, which suits a list of links.
+Two forms:
 
 |Value                   |Shows      |
 |------------------------|-----------|
