@@ -936,8 +936,16 @@ export def workspace-entry-sizes [name: string]: nothing -> table {
   }
   match ($inputs | length) {
     # `dua` lists the children of a lone directory input, not the input.
-    1 => [{ path: $inputs.0 size: ($rows | get size | math sum | default 0b) }]
+    1 => [{ path: $inputs.0 size: (sum-sizes $rows) }]
     _ => $rows
+  }
+}
+
+# `math sum` rejects an empty list, as from an empty workspace.
+export def sum-sizes [rows: table]: nothing -> filesize {
+  match $rows {
+    [] => 0b
+    _ => ($rows | get size | math sum)
   }
 }
 
@@ -959,7 +967,7 @@ def workspace-usage [names: list<string>]: nothing -> record {
 def usage-total [entries?: table]: nothing -> oneof<filesize, nothing> {
   match $entries {
     null => null
-    _ => ($entries | get size | math sum | default 0b)
+    _ => (sum-sizes $entries)
   }
 }
 

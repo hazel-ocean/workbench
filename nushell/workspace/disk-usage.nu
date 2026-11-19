@@ -12,7 +12,7 @@ export def main []: nothing -> table {
     let repos = (workspace-repos $name)
     {
       workspace: $name
-      size: ($entries | get size | math sum | default 0b)
+      size: (sum-sizes $entries)
       repos: (
         $entries
         | where path in $repos
