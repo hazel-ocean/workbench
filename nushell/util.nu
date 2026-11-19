@@ -3,12 +3,17 @@
 
 const REPO_ROOT = path self | path dirname | path dirname
 
+# A leaf lists the `describe` types it accepts. A record is a TOML table.
 # An empty TOML array describes as list<any>.
 const CONFIG_TYPES = {
   workspaces-root: [string]
   secrets-root: [string]
   default-github-org: [string]
   extra-workspace-dirs: [list<string> list<any>]
+  new: {
+    clone: [list<string> list<any>]
+    template: [string]
+  }
 }
 
 export def workbench-config-file []: nothing -> path {
@@ -45,6 +50,13 @@ export def workbench-config []: nothing -> record {
       | default []
       | each {|dir| resolve-config-path $dir }
     )
+    new: {
+      clone: ($raw.new?.clone? | default [])
+      template: (
+        $raw.new?.template?
+        | if $in == null { null } else { resolve-config-path $in }
+      )
+    }
   }
 }
 
@@ -58,25 +70,47 @@ def read-config [file: path]: nothing -> record {
       help: ($err.details.help? | default $err.msg | str trim)
     }
   }
+  check-config-keys $config $CONFIG_TYPES "" $file
+  $config
+}
+
+def check-config-keys [
+  config: record
+  types: record
+  prefix: string   # Dotted path of the enclosing table, "" at the top
+  file: path
+]: nothing -> nothing {
   for key in ($config | columns) {
-    let accepted = ($CONFIG_TYPES | get --optional $key)
+    let name = $"($prefix)($key)"
+    let accepted = ($types | get --optional $key)
     if $accepted == null {
+      let known = ($types | columns | each {|k| $"($prefix)($k)" })
       error make --unspanned {
-        msg: $"Unknown key '($key)' in '($file)'."
+        msg: $"Unknown key '($name)' in '($file)'."
         code: "workspace::unknown_config_key"
-        help: $"Known keys: ($CONFIG_TYPES | columns | str join ', ')."
+        help: $"Known keys: ($known | str join ', ')."
       }
     }
-    let actual = ($config | get $key | describe)
-    if $actual not-in $accepted {
+    let value = ($config | get $key)
+    let actual = ($value | describe)
+    let is_table = ($accepted | describe | str starts-with "record")
+    let expected = if $is_table { "table" } else { $accepted | first }
+    let fits = if $is_table {
+      $actual | str starts-with "record"
+    } else {
+      $actual in $accepted
+    }
+    if not $fits {
       error make --unspanned {
-        msg: $"Key '($key)' in '($file)' is a ($actual)."
+        msg: $"Key '($name)' in '($file)' is a ($actual)."
         code: "workspace::invalid_config_value"
-        help: $"Use a ($accepted | first)."
+        help: $"Use a ($expected)."
       }
+    }
+    if $is_table {
+      check-config-keys $value $accepted $"($name)." $file
     }
   }
-  $config
 }
 
 def resolve-config-path [value: string]: nothing -> path {

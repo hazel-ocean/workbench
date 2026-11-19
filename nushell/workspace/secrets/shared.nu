@@ -1,4 +1,4 @@
-# Shared by `workspace secrets copy` and `workspace clone`.
+# Shared by `workspace secrets copy`, `workspace clone` and `workspace new`.
 
 const UTIL = path self | path dirname | path dirname | path dirname | path join "util.nu"
 use $UTIL *
@@ -31,23 +31,30 @@ def child-dir [parent: path, name: string]: nothing -> oneof<path, nothing> {
   | get 0?
 }
 
+# Each row is a file to offer: `source` lands at `rel` under `root`, and the
+# summary shows `source` relative to `store`.
+export def store-files [store: path, root: path]: nothing -> table {
+  glob --no-dir ($store | path join "**" "*")
+  | where {|f| ($f | path basename) not-in $IGNORED_NAMES }
+  | sort
+  | each {|f| { root: $root, source: $f, rel: ($f | path relative-to $store), store: $store } }
+}
+
 export def secret-files [repo: path]: nothing -> table {
   let slug = (repo-slug $repo)
   if $slug == null { return [] }
   let org_dir = (child-dir (secrets-root) $slug.org)
   let tree = if $org_dir == null { null } else { child-dir $org_dir $slug.repo }
   if $tree == null { return [] }
-  glob --no-dir ($tree | path join "**" "*")
-  | where {|f| ($f | path basename) not-in $IGNORED_NAMES }
-  | sort
-  | each {|f| { repo: $repo, source: $f, rel: ($f | path relative-to $tree) } }
+  store-files $tree $repo
+  | update store (secrets-root)
 }
 
 export def copy-secrets [files: table]: nothing -> table {
   let picked = ($files
-    | input list --multi --fuzzy --display {|f| $"($f.repo | path basename)/($f.rel)" } "Secrets to copy:")
+    | input list --multi --fuzzy --display {|f| $"($f.root | path basename)/($f.rel)" } "Secrets to copy:")
   if ($picked | is-empty) { return [] }
-  $picked | each {|f| copy-one $f }
+  $picked | each {|f| offer-file $f }
 }
 
 # Silent without a terminal, so a scripted clone never blocks.
@@ -59,59 +66,121 @@ export def offer-secrets [repo: path]: nothing -> nothing {
   if ($rows | is-not-empty) { print ($rows | table) }
 }
 
-def copy-one [file: record]: nothing -> record {
-  let repo_name = ($file.repo | path basename)
-  let dir = ($file.rel | path dirname)
-  let into = if ($dir | is-empty) { $repo_name } else { $repo_name | path join $dir }
-  let name = (prompt-file-name $file.source $into ($file.rel | path basename))
-  let rel = if ($dir | is-empty) { $name } else { $dir | path join $name }
-  let dest = ($file.repo | path join $rel)
+# Asks what to do with one file, then copies it. A file already in place
+# with the same content, or one git tracks, is settled without a prompt.
+export def offer-file [
+  file: record    # A row from `store-files`
+  --writable      # Add the owner's write bit, as a Nix store source is read-only
+]: nothing -> record {
+  let into = ($file.root | path basename)
   let row = {
-    repo: $repo_name
-    source: ($file.source | path relative-to (secrets-root))
-    dest: $rel
+    into: $into
+    source: ($file.source | path relative-to $file.store)
+    dest: $file.rel
     action: "skipped"
     reason: null
   }
-  if (tracked $file.repo $rel) {
-    return ($row | update reason "tracked by git")
+  let settled = (settled-row $row $file)
+  if $settled != null { return $settled }
+
+  print ""
+  print $"(ansi dark_gray)($file.source)(ansi reset)"
+  mut rel = $file.rel
+  loop {
+    match (prompt-action $"($into)/($rel)") {
+      "copy" => { break }
+      "print" => { show-file $file.source }
+      "rename" => {
+        $rel = (rename-rel $rel)
+        break
+      }
+      _ => { return ($row | update reason "declined") }
+    }
   }
-  if not (ignored $file.repo $rel) {
-    print $"(ansi yellow)($repo_name)/($rel) is not gitignored, so git would offer to commit it.(ansi reset)"
+
+  let renamed = ($rel != $file.rel)
+  let row = ($row | update dest $rel)
+  let file = ($file | update rel $rel)
+  if $renamed {
+    let settled = (settled-row $row $file)
+    if $settled != null { return $settled }
+  }
+  if (is-repo $file.root) and not (ignored $file.root $rel) {
+    print $"(ansi yellow)($into)/($rel) is not gitignored, so git would offer to commit it.(ansi reset)"
     if not (confirm-prompt "Copy anyway?") {
       return ($row | update reason "not gitignored")
     }
   }
+  let dest = ($file.root | path join $rel)
   let exists = ($dest | path exists)
-  if $exists {
-    if (open --raw $dest) == (open --raw $file.source) {
-      return ($row | update action "unchanged")
-    }
-    if not (confirm-prompt $"($repo_name)/($rel) exists and differs. Overwrite?") {
-      return ($row | update reason "kept the existing file")
-    }
+  if $exists and not (confirm-prompt $"($into)/($rel) exists and differs. Overwrite?") {
+    return ($row | update reason "kept the existing file")
   }
   mkdir ($dest | path dirname)
   cp --preserve [mode] $file.source $dest
+  if $writable { ^chmod u+w $dest }
   $row | update action (if $exists { "overwritten" } else { "copied" })
 }
 
-def prompt-file-name [
-  source: path
-  into: string   # Destination directory, relative to the workspace
-  default: string
-]: nothing -> string {
-  print ""
-  print $"(ansi dark_gray)($source)(ansi reset)"
-  print $"into (ansi cyan)($into)/(ansi reset)"
-  mut name = $default
-  loop {
-    $name = (input --default $default "name > " | str trim)
-    if ($name | is-empty) { $name = $default }
-    if not (($name | str contains "/") or ($name in [".", ".."])) { break }
-    print $"(ansi yellow)Type a file name only. The directory comes from the store.(ansi reset)"
+def settled-row [row: record, file: record]: nothing -> oneof<record, nothing> {
+  if (is-repo $file.root) and (tracked $file.root $file.rel) {
+    return ($row | update reason "tracked by git")
   }
-  $name
+  let dest = ($file.root | path join $file.rel)
+  if ($dest | path exists) and ((open --raw $dest) == (open --raw $file.source)) {
+    return ($row | update action "unchanged")
+  }
+  null
+}
+
+# One key, no Enter needed. Enter alone copies.
+def prompt-action [label: string]: nothing -> string {
+  mut action = ""
+  while $action == "" {
+    print --no-newline $"Copy ($label)? \(Y/p/r/n\) > "
+    let key = ((input listen --types [key]).code? | default "" | str lowercase)
+    print $key  # `input listen` does not echo
+    $action = match $key {
+      "enter" | "y" => "copy"
+      "p" => "print"
+      "r" => "rename"
+      "n" | "esc" => "skip"
+      _ => {
+        print $"(ansi yellow)Press Enter or y to copy, p to print, r to rename, n to skip.(ansi reset)"
+        ""
+      }
+    }
+  }
+  $action
+}
+
+def show-file [source: path]: nothing -> nothing {
+  let content = (open --raw $source)
+  if ($content | describe) == "binary" {
+    print $"(ansi dark_gray)binary file, ($content | bytes length) bytes(ansi reset)"
+  } else {
+    print $content
+  }
+}
+
+# The directory comes from the store, so only the file name changes.
+def rename-rel [rel: string]: nothing -> string {
+  let dir = ($rel | path dirname)
+  let default = ($rel | path basename)
+  mut name = ""
+  while $name == "" {
+    let typed = (input --default $default "name > " | str trim)
+    $name = if ($typed | is-empty) { $default } else { $typed }
+    if ($name | str contains "/") or ($name in [".", ".."]) {
+      print $"(ansi yellow)Type a file name only. The directory stays the same.(ansi reset)"
+      $name = ""
+    }
+  }
+  if ($dir | is-empty) { $name } else { $dir | path join $name }
+}
+
+def is-repo [dir: path]: nothing -> bool {
+  $dir | path join ".git" | path exists
 }
 
 def tracked [repo: path, rel: string]: nothing -> bool {

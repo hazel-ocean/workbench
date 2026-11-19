@@ -123,16 +123,22 @@ The first two levels are the GitHub org and repo, matched against the clone's
 files. The rest of the path is where the file lands in the repo.
 
 `workspace secrets copy` lists the files for every repo in the workspace, or
-for one with `--repo`. For each file you pick, it prints the destination
-directory and asks for a name. Enter keeps the name. Type a new one to rename
-the file, as when `.env.staging` should land as `.env`. The copy is verbatim,
-file mode included.
+for one with `--repo`. Each file you pick gets a one-key prompt:
 
-- A destination git tracks is never replaced.
+|Key          |Action                                            |
+|-------------|--------------------------------------------------|
+|Enter or `y` |Copy as is                                        |
+|`p`          |Print the file, then ask again                    |
+|`r`          |Rename, as when `.env.staging` should land as `.env`|
+|`n` or Esc   |Skip                                              |
+
+The copy is verbatim, file mode included.
+
+- A destination git tracks is never replaced, and is not offered.
+- An identical existing file is reported `unchanged`, and is not offered.
 - A destination that is not gitignored asks first, since git would offer to
   commit it.
-- An existing file that differs asks before it is overwritten. An identical
-  one is reported `unchanged`.
+- An existing file that differs asks before it is overwritten.
 
 `workspace clone` shows the same picker after each clone that has files in the
 store. Press Esc to skip it. It does not appear when stdin is no terminal, so a
@@ -150,6 +156,8 @@ Every key is optional, and a missing file means every default.
 |`default-github-org`  |unset          |Org prepended to bare repo names|
 |`secrets-root`        |`./secrets/`   |Where `workspace secrets` reads |
 |`extra-workspace-dirs`|`[]`           |Extra workspaces                |
+|`new.clone`           |`[]`           |Repos `workspace new` clones    |
+|`new.template`        |unset          |Files `workspace new` offers    |
 
 A path may start with `~`. A relative path resolves against the workbench repo
 root. An unknown key or a value of the wrong type is an error. The file is read
@@ -161,6 +169,17 @@ with one repo. A missing directory is skipped. Two entries with the same
 basename, or one that matches a workspace under the root, are an error.
 
 Without a `default-github-org`, qualify every repo as `<org>/<repo>`.
+
+`workspace new` sets up each workspace under the root from the `new` table.
+Running it on an existing workspace adds what is missing.
+
+- It offers each file in the `new.template` directory for the workspace root,
+  with the same prompt as `workspace secrets copy` and no picker. Without a
+  terminal, it skips the template. A copy gains the owner's write bit, since a
+  template in the Nix store is read-only.
+- It clones the repos you name, then each repo in `new.clone`. A repo already
+  in the workspace is skipped, so a ref you give for a `new.clone` repo wins.
+- An extra workspace gets neither, only the repos you name.
 
 Set `WORKBENCH_CONFIG` to read a different file for one command:
 

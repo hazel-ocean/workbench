@@ -3,3 +3,7 @@ default-github-org = "acme"
 # workspaces-root = "/absolute/path/to/workspaces"
 # secrets-root = "/absolute/path/to/secrets"
 # extra-workspace-dirs = ["~/.config/nix-config", "/absolute/path/to/other"]
+
+# [new]
+# clone = ["acme/shared-config"]
+# template = "/absolute/path/to/template"
