@@ -177,8 +177,10 @@ Running it on an existing workspace adds what is missing.
   with the same prompt as `workspace secrets copy` and no picker. Without a
   terminal, it skips the template. A copy gains the owner's write bit, since a
   template in the Nix store is read-only.
-- It clones the repos you name, then each repo in `new.clone`. A repo already
-  in the workspace is skipped, so a ref you give for a `new.clone` repo wins.
+- It clones the repos you name, then asks about each repo in `new.clone`
+  (Enter clones). It does not ask about a repo already in the workspace or one
+  you named, so a ref you give for a `new.clone` repo wins. Without a terminal,
+  it skips `new.clone`.
 - An extra workspace gets neither, only the repos you name.
 
 Set `WORKBENCH_CONFIG` to read a different file for one command:

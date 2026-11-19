@@ -5,8 +5,8 @@ use secrets/shared.nu *
 
 # Create a new workspace and cd into it, optionally cloning repos
 #
-# A workspace under the root also gets the config's `new.template` files,
-# each offered with a prompt, and its `new.clone` repos. Both skip what is
+# A workspace under the root is also offered the config's `new.template`
+# files and `new.clone` repos, each with a prompt. Neither offers what is
 # already there, so running this on an existing workspace backfills it.
 export def --env main [
   name: string       # Workspace directory name
@@ -35,12 +35,34 @@ export def --env main [
   if $under_root {
     offer-template $dir $config.new.template
   }
-  # The named repos go first, so a ref given for a `new.clone` repo wins.
-  # `clone` skips the second copy.
-  let all = if $under_root { $repos ++ $config.new.clone } else { $repos }
+  let named_dests = ($repos | each {|spec| repo-dest $spec })
+  let offered = if $under_root {
+    $config.new.clone
+    | where {|spec|
+        let dest = (repo-dest $spec)
+        not ($dest in $named_dests or ($dir | path join $dest | path exists))
+      }
+    | where {|spec| offer-clone $spec }
+  } else {
+    []
+  }
+  let all = ($repos ++ $offered)
   if not ($all | is-empty) {
     clone ...$all --full=$full
   }
+}
+
+def repo-dest [spec: string]: nothing -> string {
+  let parsed = (parse-repo-spec $spec)
+  $parsed.dir | default ($parsed.slug | path basename)
+}
+
+def offer-clone [spec: string]: nothing -> bool {
+  if not (is-terminal --stdin) {
+    print $"(ansi yellow)skip clone ($spec) \(no terminal to ask\)(ansi reset)"
+    return false
+  }
+  confirm-prompt --default-yes $"Clone ($spec)?"
 }
 
 def offer-template [dir: path, template: oneof<path, nothing>]: nothing -> nothing {

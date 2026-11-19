@@ -64,62 +64,6 @@ export def main [
   }
 }
 
-# The ref starts at the first `@` or `#`, so a branch name may contain slashes.
-def parse-repo-spec [spec: string]: nothing -> record {
-  let split = (split-dest $spec)
-  let rest = $split.rest
-  let sigils = ([($rest | str index-of "@") ($rest | str index-of "#")]
-    | where {|i| $i >= 0 })
-  let cut = if ($sigils | is-empty) { null } else { $sigils | math min }
-  let name = if $cut == null { $rest } else { $rest | str substring 0..<$cut }
-  let ref = if $cut == null { null } else { $rest | str substring $cut.. }
-  let slug = if ($name | str contains "/") {
-    $name
-  } else {
-    let org = (workbench-config).default-github-org
-    if ($org | is-empty) {
-      error make --unspanned {
-        msg: $"No default org for bare repo '($name)'."
-        code: "workspace::no_default_org"
-        help: $"Set default-github-org in ((workbench-config-file)), or qualify the repo as <org>/($name)."
-      }
-    }
-    $"($org)/($name)"
-  }
-  { slug: $slug, ref: $ref, dir: $split.dir }
-}
-
-# Cut at the last `=`, so a branch name may contain one. The destination must
-# be one level down, where `workspace-repos` looks.
-def split-dest [spec: string]: nothing -> record {
-  let cut = ($spec | str index-of --end "=")
-  if $cut < 0 { return { rest: $spec, dir: null } }
-  let rest = ($spec | str substring 0..<$cut)
-  let dir = ($spec | str substring ($cut + 1)..)
-  if ($rest | is-empty) {
-    error make --unspanned {
-      msg: $"No repo before '=' in '($spec)'."
-      code: "workspace::malformed_repo_spec"
-      help: "Usage: [<org>/]<repo>[@<tag|branch> | #<pr>][=<dir>]"
-    }
-  }
-  if ($dir | is-empty) {
-    error make --unspanned {
-      msg: $"Empty destination in '($spec)'."
-      code: "workspace::empty_destination"
-      help: $"Name the directory, as in '($rest)=my-dir', or drop the '='."
-    }
-  }
-  if ($dir | str contains "/") or ($dir in [".", ".."]) {
-    error make --unspanned {
-      msg: $"Destination '($dir)' is not a plain directory name."
-      code: "workspace::nested_destination"
-      help: "A clone lands one level under the workspace root, so the destination cannot be a path."
-    }
-  }
-  { rest: $rest, dir: $dir }
-}
-
 def checkout-ref [repo: path, ref: string]: nothing -> nothing {
   let value = ($ref | str substring 1..)
   if ($ref | str starts-with "#") {
